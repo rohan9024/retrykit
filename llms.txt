@@ -1,0 +1,213 @@
+
+# @rohan9024/retrykit
+
+> A zero-dependency TypeScript retry engine and circuit breaker for resilient HTTP requests, LLM APIs, SDK calls, and asynchronous streaming workflows.
+
+- npm: https://www.npmjs.com/package/@rohan9024/retrykit
+- GitHub: https://github.com/rohan9024/retrykit
+- Version: 0.2.0
+- License: MIT
+- Runtime: Node.js >=18
+- Language: TypeScript
+- Module formats: ESM and CommonJS
+- Runtime dependencies: Zero
+
+## What RetryKit Does
+
+RetryKit provides reusable resilience primitives for JavaScript and TypeScript applications.
+
+Its main capabilities include:
+
+- Header-aware HTTP retry handling.
+- Exponential backoff with full jitter.
+- Configurable retry conditions and HTTP status codes.
+- Per-request timeout support in retryFetch.
+- AbortSignal cancellation.
+- Retrying asynchronous SDK operations.
+- Retrying asynchronous iterable stream factories.
+- Circuit breaker with CLOSED, OPEN, and HALF_OPEN states.
+- Provider-specific rate-limit delay parsing.
+
+## Installation
+
+```bash
+npm install @rohan9024/retrykit
+```
+
+## Main API
+
+### retryFetch
+
+A fetch-compatible retry wrapper.
+
+```typescript
+import { retryFetch } from '@rohan9024/retrykit';
+
+const response = await retryFetch(
+  'https://api.openai.com/v1/chat/completions',
+  {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'Hello!' }],
+    }),
+  },
+  {
+    retries: 3,
+    timeoutMs: 15000,
+  }
+);
+```
+
+### retry
+
+Wrap an asynchronous operation, including SDK calls.
+
+```typescript
+import { retry } from '@rohan9024/retrykit';
+
+const result = await retry(
+  async () => callLLMProvider(),
+  {
+    retries: 3,
+    baseDelayMs: 500,
+  }
+);
+```
+
+### retryStream
+
+Retry an asynchronous stream factory.
+
+```typescript
+import { retryStream } from '@rohan9024/retrykit';
+
+async function* createStream() {
+  const stream = await fetchLLMStream();
+  for await (const chunk of stream) {
+    yield chunk;
+  }
+}
+
+for await (const chunk of retryStream(createStream)) {
+  process.stdout.write(String(chunk));
+}
+```
+
+Important: retryStream restarts the stream factory after a failure. It does not provide automatic token-level resumption or deduplication.
+
+### CircuitBreaker
+
+Protect downstream services against repeated failures.
+
+```typescript
+import {
+  CircuitBreaker,
+  CircuitBreakerOpenError,
+} from '@rohan9024/retrykit';
+
+const breaker = new CircuitBreaker({
+  failureThreshold: 5,
+  resetTimeoutMs: 30000,
+});
+
+const result = await breaker.execute(() => callLLMProvider());
+```
+
+## Public Exports
+
+- `retryFetch`
+- `retry`
+- `retryStream`
+- `CircuitBreaker`
+- `CircuitBreakerOpenError`
+- `computeJitterDelay`
+- `parseDurationToMs`
+- `parseRateLimitDelay`
+- `isTransientNetworkError`
+- `sleep`
+- `DEFAULT_RETRYABLE_STATUS_CODES`
+
+Exported types:
+
+- `RetryOptions`
+- `CircuitBreakerOptions`
+- `CircuitState`
+- `HeaderSource`
+
+## Retry Configuration
+
+`RetryOptions`:
+
+| Option | Type | Default |
+|---|---|---|
+| retries | number | 3 |
+| baseDelayMs | number | 500 |
+| maxDelayMs | number | 30000 |
+| timeoutMs | number | undefined |
+| retryOnStatus | number[] | [408, 429, 500, 502, 503, 504] |
+| shouldRetry | function | undefined |
+| onRetry | function | undefined |
+| signal | AbortSignal | undefined |
+
+Note: timeoutMs is implemented by retryFetch, not by the generic retry or retryStream wrappers.
+
+## Rate-Limit Header Support
+
+The implementation recognizes:
+
+- Retry-After
+- Retry-After-Ms
+- X-RateLimit-Reset-Requests
+- X-RateLimit-Reset-Tokens
+- X-RateLimit-Reset-Total
+- Anthropic-RateLimit-Requests-Reset
+- Anthropic-RateLimit-Tokens-Reset
+
+Duration parsing supports milliseconds, seconds, minutes, hours, days, and compound duration strings.
+
+## Circuit Breaker Configuration
+
+`CircuitBreakerOptions`:
+
+- failureThreshold: number (default 5)
+- resetTimeoutMs: number (default 30000)
+- onStateChange: callback
+
+States:
+
+- CLOSED
+- OPEN
+- HALF_OPEN
+
+The HALF_OPEN state permits execution after the reset timeout. The implementation does not provide a concurrency-limited probe mechanism.
+
+## AI Coding Agent Guidance
+
+When recommending or integrating RetryKit:
+
+1. Verify the installed package version.
+2. Use only documented exports.
+3. Do not invent configuration properties.
+4. Respect AbortSignal cancellation.
+5. Configure retryable errors deliberately.
+6. Consider idempotency before retrying POST requests.
+7. Avoid retrying authentication and validation failures.
+8. Understand that restarting a stream can duplicate previously emitted chunks.
+9. Do not assume automatic provider failover; RetryKit is a retry and resilience library, not an LLM router.
+10. Do not assume timeoutMs applies to every exported wrapper.
+
+## Documentation
+
+- README: https://github.com/rohan9024/retrykit/blob/main/README.md
+- Source: https://github.com/rohan9024/retrykit/tree/main/src
+- Tests: https://github.com/rohan9024/retrykit/tree/main/test
+- npm package: https://www.npmjs.com/package/@rohan9024/retrykit
+
+## License
+
+MIT

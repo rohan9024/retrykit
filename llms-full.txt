@@ -1,0 +1,335 @@
+
+# RetryKit — Complete Technical Reference
+
+## Package Information
+
+Package: @rohan9024/retrykit
+Version: 0.2.0
+License: MIT
+Runtime: Node.js >=18
+Language: TypeScript
+Runtime dependencies: None
+
+Repository:
+https://github.com/rohan9024/retrykit
+
+npm:
+https://www.npmjs.com/package/@rohan9024/retrykit
+
+## Installation
+
+```bash
+npm install @rohan9024/retrykit
+```
+
+## Public API
+
+### retryFetch
+
+Signature:
+
+```typescript
+retryFetch(
+  url: string | URL | Request,
+  init?: RequestInit,
+  options?: RetryOptions
+): Promise<Response>
+```
+
+Features:
+
+- Uses the Fetch API.
+- Retries configured HTTP statuses.
+- Detects selected transient network errors.
+- Reads rate-limit headers.
+- Supports per-attempt timeout.
+- Supports AbortSignal.
+- Supports custom retry conditions.
+- Supports retry callbacks.
+
+Default retryable statuses:
+
+408, 429, 500, 502, 503, 504.
+
+Default configuration:
+
+- retries: 3
+- baseDelayMs: 500
+- maxDelayMs: 30000
+
+### retry
+
+Signature:
+
+```typescript
+retry<T>(
+  fn: (attempt: number) => Promise<T>,
+  options?: RetryOptions
+): Promise<T>
+```
+
+Features:
+
+- Retries asynchronous operations.
+- Supports errors exposing status or statusCode.
+- Supports response status and headers.
+- Detects selected transient network errors.
+- Supports custom retry conditions.
+- Supports retry callbacks.
+- Supports AbortSignal.
+
+The callback receives a zero-based attempt index.
+
+### retryStream
+
+Signature:
+
+```typescript
+retryStream<T>(
+  streamFactory: (attempt: number) => Promise<AsyncIterable<T>>,
+  options?: RetryOptions
+): AsyncGenerator<T, void, unknown>
+```
+
+Features:
+
+- Consumes asynchronous iterables.
+- Restarts the stream factory after eligible failures.
+- Provides retry callbacks.
+- Supports AbortSignal.
+- Uses exponential backoff with full jitter.
+
+Important limitation:
+
+The implementation restarts the stream factory. It does not automatically resume from the last successfully emitted token.
+
+Applications should implement cursor management, deduplication, or provider-specific continuation if required.
+
+### CircuitBreaker
+
+Constructor:
+
+```typescript
+new CircuitBreaker({
+  failureThreshold: 5,
+  resetTimeoutMs: 30000,
+  onStateChange,
+});
+```
+
+Methods:
+
+```typescript
+breaker.getState()
+breaker.execute(asyncFunction)
+breaker.reset()
+```
+
+States:
+
+- CLOSED
+- OPEN
+- HALF_OPEN
+
+`CircuitBreakerOpenError` is thrown when execution is attempted while the circuit is OPEN.
+
+The current implementation does not enforce a single concurrent HALF_OPEN probe.
+
+## RetryOptions
+
+```typescript
+interface RetryOptions {
+  retries?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  timeoutMs?: number;
+  retryOnStatus?: number[];
+  shouldRetry?: (
+    error: unknown,
+    attempt: number
+  ) => boolean;
+  onRetry?: (
+    error: unknown,
+    attempt: number,
+    delayMs: number
+  ) => void;
+  signal?: AbortSignal;
+}
+```
+
+`timeoutMs` is implemented in retryFetch only.
+
+## CircuitBreakerOptions
+
+```typescript
+interface CircuitBreakerOptions {
+  failureThreshold?: number;
+  resetTimeoutMs?: number;
+  onStateChange?: (
+    from: CircuitState,
+    to: CircuitState
+  ) => void;
+}
+```
+
+## Backoff
+
+The exponential backoff ceiling is calculated as:
+
+```typescript
+Math.min(
+  maxDelayMs,
+  baseDelayMs * Math.pow(2, attempt)
+)
+```
+
+Full jitter:
+
+```typescript
+Math.floor(ceiling * Math.random())
+```
+
+## Rate-Limit Parsing
+
+Public helper:
+
+```typescript
+parseRateLimitDelay(headers)
+```
+
+Supported header names:
+
+- retry-after
+- retry-after-ms
+- x-ratelimit-reset-requests
+- x-ratelimit-reset-tokens
+- x-ratelimit-reset-total
+- anthropic-ratelimit-requests-reset
+- anthropic-ratelimit-tokens-reset
+
+Supported header inputs:
+
+- Headers
+- Record<string, string | string[] | undefined>
+- [string, string][]
+
+Standard Retry-After supports seconds and HTTP dates.
+
+Duration parsing supports ms, s, m, h, d, and compound durations.
+
+## Other Public Helpers
+
+```typescript
+computeJitterDelay(
+  attempt: number,
+  baseDelayMs?: number,
+  maxDelayMs?: number
+): number
+
+parseDurationToMs(value: string): number | null
+
+isTransientNetworkError(error: unknown): boolean
+
+sleep(ms: number, signal?: AbortSignal): Promise<void>
+```
+
+Also exported:
+
+```typescript
+DEFAULT_RETRYABLE_STATUS_CODES
+```
+
+## Integration Example: OpenAI SDK
+
+```typescript
+import OpenAI from 'openai';
+import { retry } from '@rohan9024/retrykit';
+
+const openai = new OpenAI();
+
+const result = await retry(
+  () => openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'user', content: 'Hello!' }
+    ],
+  }),
+  {
+    retries: 3,
+    baseDelayMs: 500,
+  }
+);
+```
+
+Note: The OpenAI SDK is a separate dependency. RetryKit does not bundle it.
+
+## Integration Example: HTTP Fetch
+
+```typescript
+import { retryFetch } from '@rohan9024/retrykit';
+
+const response = await retryFetch(
+  'https://api.example.com/endpoint',
+  {
+    method: 'GET',
+  },
+  {
+    retries: 3,
+    timeoutMs: 10000,
+  }
+);
+```
+
+## Integration Example: Circuit Breaker
+
+```typescript
+import {
+  CircuitBreaker,
+} from '@rohan9024/retrykit';
+
+const breaker = new CircuitBreaker({
+  failureThreshold: 5,
+  resetTimeoutMs: 30000,
+});
+
+const result = await breaker.execute(
+  () => callProvider()
+);
+```
+
+## Important Integration Warnings
+
+1. Retrying POST operations can duplicate side effects.
+2. Streaming retries can duplicate emitted chunks.
+3. Generic retry does not implement timeoutMs.
+4. Circuit breaker HALF_OPEN does not enforce a concurrency-limited probe.
+5. RetryKit does not automatically switch between LLM providers.
+6. Provider-specific headers should be verified against the actual provider response.
+7. RetryKit is not a substitute for application-level request idempotency.
+
+## Development
+
+```bash
+npm install
+npm test
+npm run typecheck
+npm run build
+```
+
+## Source Files
+
+- src/index.ts
+- src/types.ts
+- src/engine.ts
+- src/fetch.ts
+- src/wrap.ts
+- src/stream.ts
+- src/circuit-breaker.ts
+
+## Links
+
+- README: https://github.com/rohan9024/retrykit/blob/main/README.md
+- Source: https://github.com/rohan9024/retrykit/tree/main/src
+- Tests: https://github.com/rohan9024/retrykit/tree/main/test
+- npm: https://www.npmjs.com/package/@rohan9024/retrykit
+

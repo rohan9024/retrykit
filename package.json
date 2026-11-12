@@ -16,6 +16,8 @@
     "dist",
     "README.md",
     "llms.txt",
+    "llms-full.txt",
+    "AGENTS.md",
     "LICENSE"
   ],
   "scripts": {
@@ -37,7 +39,23 @@
     "streaming",
     "rate-limit",
     "backoff",
-    "jitter"
+    "jitter",
+    "llm",
+    "llm-retry",
+    "retry",
+    "retry-engine",
+    "openai",
+    "anthropic",
+    "deepseek",
+    "groq",
+    "mistral",
+    "rate-limit",
+    "rate-limit-handler",
+    "exponential-backoff",
+    "circuit-breaker",
+    "typescript",
+    "fetch",
+    "llm-infrastructure"
   ],
   "author": "rohan9024",
   "license": "MIT",
