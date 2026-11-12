@@ -1,6 +1,6 @@
 {
   "name": "@rohan9024/retrykit",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "The ultimate zero-dependency, header-aware retry engine and circuit breaker for LLM APIs (OpenAI, Anthropic, DeepSeek, Groq).",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

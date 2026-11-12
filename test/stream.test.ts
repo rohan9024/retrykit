@@ -1,39 +1,59 @@
 import { describe, expect, it, vi } from 'vitest';
-import { retryStream } from '../src/stream.js';
+import { retryStream, StreamDuplicatePreventionError } from '../src/stream.js';
 
-describe('retryStream', () => {
-  it('yields chunks from successful stream generator', async () => {
-    async function* makeStream() {
-      yield 'chunk-1';
-      yield 'chunk-2';
-    }
+describe('retryStream Checkpoint Resumption', () => {
+  it('resumes from checkpoint cursor without duplicating chunks on mid-stream drop', async () => {
+    let callCount = 0;
+
+    const createStream = async (checkpoint: number | undefined) => {
+      callCount++;
+      const start = checkpoint ?? 0;
+
+      async function* gen() {
+        for (let i = start + 1; i <= 4; i++) {
+          if (callCount === 1 && i === 3) {
+            throw new Error('Socket drop mid-stream');
+          }
+          yield { id: i, text: `token-${i}` };
+        }
+      }
+      return gen();
+    };
 
     const chunks: string[] = [];
-    for await (const chunk of retryStream(async () => makeStream())) {
-      chunks.push(chunk);
+    const stream = retryStream({
+      createStream,
+      getCheckpoint: (chunk) => chunk.id,
+      baseDelayMs: 5,
+    });
+
+    for await (const chunk of stream) {
+      chunks.push(chunk.text);
     }
 
-    expect(chunks).toEqual(['chunk-1', 'chunk-2']);
+    // Must yield tokens 1 through 4 exactly once with zero duplicates
+    expect(chunks).toEqual(['token-1', 'token-2', 'token-3', 'token-4']);
+    expect(callCount).toBe(2);
   });
 
-  it('retries on mid-stream failure and succeeds', async () => {
+  it('fast-fails with StreamDuplicatePreventionError if uncheckpointed stream drops mid-sentence', async () => {
     let callCount = 0;
-    async function* flakyStream() {
-      callCount++;
-      if (callCount === 1) {
-        throw new Error('Stream socket disconnected');
-      }
-      yield 'recovered-chunk';
-    }
+    const stream = retryStream({
+      createStream: async () => {
+        callCount++;
+        async function* gen() {
+          yield 'Hello';
+          throw new Error('Drop after first token');
+        }
+        return gen();
+      },
+      baseDelayMs: 5,
+    });
 
-    const onRetry = vi.fn();
-    const chunks: string[] = [];
+    const iterator = stream[Symbol.asyncIterator]();
+    const first = await iterator.next();
+    expect(first.value).toBe('Hello');
 
-    for await (const chunk of retryStream(async () => flakyStream(), { baseDelayMs: 5, onRetry })) {
-      chunks.push(chunk);
-    }
-
-    expect(chunks).toEqual(['recovered-chunk']);
-    expect(onRetry).toHaveBeenCalledTimes(1);
+    await expect(iterator.next()).rejects.toThrow(StreamDuplicatePreventionError);
   });
 });

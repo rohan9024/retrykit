@@ -8,21 +8,36 @@ export class CircuitBreakerOpenError extends Error {
 }
 
 /**
- * Zero-dependency Circuit Breaker implementation to stop cascading failure
- * cascades when downstream LLM APIs experience total outages.
+ * Enterprise-grade Circuit Breaker with atomic half-open probe reservation
+ * and configurable failure classification.
  */
 export class CircuitBreaker {
   private state: CircuitState = 'CLOSED';
   private failureCount: number = 0;
   private lastFailureTime: number = 0;
+  private halfOpenCallsInFlight: number = 0;
+
   private readonly failureThreshold: number;
   private readonly resetTimeoutMs: number;
+  private readonly halfOpenMaxCalls: number;
+  private readonly shouldCountFailure: (error: unknown) => boolean;
   private readonly onStateChange?: (from: CircuitState, to: CircuitState) => void;
 
   constructor(options: CircuitBreakerOptions = {}) {
     this.failureThreshold = options.failureThreshold ?? 5;
     this.resetTimeoutMs = options.resetTimeoutMs ?? 30000;
+    this.halfOpenMaxCalls = options.halfOpenMaxCalls ?? 1;
     this.onStateChange = options.onStateChange;
+
+    this.shouldCountFailure =
+      options.shouldCountFailure ??
+      ((error: unknown) => {
+        // Do not trip the breaker on client-side aborts or circuit breaker rejections
+        if (error instanceof Error && (error.name === 'AbortError' || error.name === 'CircuitBreakerOpenError')) {
+          return false;
+        }
+        return true;
+      });
   }
 
   public getState(): CircuitState {
@@ -42,18 +57,48 @@ export class CircuitBreaker {
       throw new CircuitBreakerOpenError();
     }
 
+    if (currentState === 'HALF_OPEN') {
+      // Synchronously reserve a probe slot before awaiting
+      if (this.halfOpenCallsInFlight >= this.halfOpenMaxCalls) {
+        throw new CircuitBreakerOpenError('Circuit breaker is HALF_OPEN and test probe is in progress.');
+      }
+      this.halfOpenCallsInFlight++;
+    }
+
     try {
       const result = await fn();
       this.recordSuccess();
       return result;
     } catch (error) {
-      this.recordFailure();
+      if (this.shouldCountFailure(error)) {
+        this.recordFailure();
+      } else if (currentState === 'HALF_OPEN') {
+        // If the probe failed with a non-infrastructure error (e.g. client abort), release probe slot
+        this.halfOpenCallsInFlight = Math.max(0, this.halfOpenCallsInFlight - 1);
+      }
       throw error;
     }
   }
 
+  /**
+   * Helper for fetch calls to treat HTTP 500+ or 429 as circuit breaker failures.
+   */
+  public async executeFetch(
+    fn: () => Promise<Response>,
+    isFailureResponse: (res: Response) => boolean = (res) => res.status >= 500 || res.status === 429
+  ): Promise<Response> {
+    return this.execute(async () => {
+      const response = await fn();
+      if (isFailureResponse(response)) {
+        throw new Error(`HTTP ${response.status} classified as infrastructure failure.`);
+      }
+      return response;
+    });
+  }
+
   private recordSuccess(): void {
     if (this.state === 'HALF_OPEN') {
+      this.halfOpenCallsInFlight = 0;
       this.transitionTo('CLOSED');
     }
     this.failureCount = 0;
@@ -62,10 +107,8 @@ export class CircuitBreaker {
   private recordFailure(): void {
     this.failureCount++;
     this.lastFailureTime = Date.now();
-
-    if (this.state === 'HALF_OPEN' || this.failureCount >= this.failureThreshold) {
-      this.transitionTo('OPEN');
-    }
+    this.halfOpenCallsInFlight = 0;
+    this.transitionTo('OPEN');
   }
 
   private transitionTo(nextState: CircuitState): void {
@@ -80,5 +123,6 @@ export class CircuitBreaker {
     this.state = 'CLOSED';
     this.failureCount = 0;
     this.lastFailureTime = 0;
+    this.halfOpenCallsInFlight = 0;
   }
 }

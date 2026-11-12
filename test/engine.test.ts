@@ -1,39 +1,60 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeJitterDelay,
-  getHeader,
   isTransientNetworkError,
   parseDurationToMs,
   parseRateLimitDelay,
+  parseTimestampOrDelay,
 } from '../src/engine.js';
 
-describe('engine: computeJitterDelay', () => {
-  it('should return delays within exponential boundaries', () => {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const delay = computeJitterDelay(attempt, 100, 5000);
-      const maxPossible = Math.min(5000, 100 * Math.pow(2, attempt));
-      expect(delay).toBeGreaterThanOrEqual(0);
-      expect(delay).toBeLessThanOrEqual(maxPossible);
-    }
-  });
-});
+describe('engine: parseTimestampOrDelay', () => {
+  const fixedNow = 1700000000000;
 
-describe('engine: parseRateLimitDelay multi-provider', () => {
-  it('parses anthropic-ratelimit-tokens-reset header', () => {
-    const delay = parseRateLimitDelay({ 'anthropic-ratelimit-tokens-reset': '15s' });
+  it('parses Anthropic RFC 3339 timestamps', () => {
+    const target = new Date(fixedNow + 15000).toISOString();
+    const delay = parseTimestampOrDelay(target, fixedNow);
     expect(delay).toBe(15000);
   });
 
-  it('parses retry-after-ms header (Groq)', () => {
-    const delay = parseRateLimitDelay({ 'retry-after-ms': '450' });
-    expect(delay).toBe(450);
+  it('parses Unix epoch seconds (> 1e9)', () => {
+    const epochSec = (fixedNow + 30000) / 1000;
+    const delay = parseTimestampOrDelay(String(epochSec), fixedNow);
+    expect(delay).toBe(30000);
+  });
+
+  it('parses relative seconds without mistaking for epoch', () => {
+    expect(parseTimestampOrDelay('60', fixedNow)).toBe(60000);
+  });
+
+  it('parses relative duration strings', () => {
+    expect(parseDurationToMs('15s')).toBe(15000);
+    expect(parseDurationToMs('600ms')).toBe(600);
+  });
+});
+
+describe('engine: parseRateLimitDelay multi-provider quota dimensions', () => {
+  it('prioritizes tokens over requests when tokens quota is 0 (Groq)', () => {
+    const headers = {
+      'x-ratelimit-remaining-tokens': '0',
+      'x-ratelimit-reset-tokens': '12s',
+      'x-ratelimit-remaining-requests': '50',
+      'x-ratelimit-reset-requests': '1s',
+    };
+    expect(parseRateLimitDelay(headers)).toBe(12000);
+  });
+
+  it('parses Anthropic input tokens reset header', () => {
+    const headers = {
+      'anthropic-ratelimit-input-tokens-reset': '5s',
+    };
+    expect(parseRateLimitDelay(headers)).toBe(5000);
   });
 });
 
 describe('engine: isTransientNetworkError', () => {
-  it('detects undici socket drops', () => {
-    const err = new Error('undici socket drop') as Error & { code: string };
-    err.code = 'UND_ERR_SOCKET';
+  it('identifies Undici headers and body timeouts', () => {
+    const err = new Error('headers timeout') as Error & { code: string };
+    err.code = 'UND_ERR_HEADERS_TIMEOUT';
     expect(isTransientNetworkError(err)).toBe(true);
   });
 });

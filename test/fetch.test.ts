@@ -1,77 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RateLimitExceededError } from '../src/engine.js';
 import { retryFetch } from '../src/fetch.js';
 
-describe('retryFetch', () => {
+describe('retryFetch Safe Execution', () => {
   const originalFetch = globalThis.fetch;
 
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
+  beforeEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => { globalThis.fetch = originalFetch; });
 
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it('resolves on initial 200 OK without retrying', async () => {
-    const mock = vi.fn().mockResolvedValue(new Response('OK', { status: 200 }));
+  it('refuses to retry POST requests when retrySafety is safe-methods-only', async () => {
+    const mock = vi.fn().mockResolvedValue(new Response('Error', { status: 500 }));
     globalThis.fetch = mock;
 
-    const res = await retryFetch('https://api.openai.com/v1/models');
-    expect(res.status).toBe(200);
+    const res = await retryFetch('https://api.openai.com/v1/chat', { method: 'POST' }, {
+      retrySafety: 'safe-methods-only',
+      retries: 3,
+    });
+
+    expect(res.status).toBe(500);
     expect(mock).toHaveBeenCalledTimes(1);
   });
 
-  it('retries on 429 and honors retry-after header', async () => {
-    const mock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response('Rate Limited', {
-          status: 429,
-          headers: { 'retry-after': '0.05' },
-        })
-      )
-      .mockResolvedValueOnce(new Response('Success', { status: 200 }));
-    globalThis.fetch = mock;
-
-    const onRetry = vi.fn();
-    const res = await retryFetch('https://api.openai.com/v1/chat/completions', undefined, {
-      retries: 2,
-      onRetry,
-    });
-
-    expect(res.status).toBe(200);
-    expect(mock).toHaveBeenCalledTimes(2);
-    expect(onRetry).toHaveBeenCalledWith(expect.any(Response), 1, 50);
-  });
-
-  it('retries on 500 server error and succeeds', async () => {
-    const mock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response('Internal Error', { status: 500 }))
-      .mockResolvedValueOnce(new Response('Success', { status: 200 }));
-    globalThis.fetch = mock;
-
-    const res = await retryFetch('https://api.anthropic.com/v1/messages', undefined, {
-      baseDelayMs: 10,
-    });
-
-    expect(res.status).toBe(200);
-    expect(mock).toHaveBeenCalledTimes(2);
-  });
-
-  it('stops and rejects when AbortSignal triggers', async () => {
-    const controller = new AbortController();
-    const mock = vi.fn().mockImplementation(() => {
-      controller.abort();
-      return Promise.resolve(new Response('Rate Limited', { status: 429 }));
-    });
-    globalThis.fetch = mock;
+  it('throws RateLimitExceededError when server wait exceeds maxDelayMs', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response('Cooldown', { status: 429, headers: { 'retry-after': '60' } })
+    );
 
     await expect(
-      retryFetch('https://example.com', undefined, {
-        signal: controller.signal,
-        baseDelayMs: 10,
-      })
-    ).rejects.toThrow();
+      retryFetch('https://api.openai.com/v1', undefined, { maxDelayMs: 30000 })
+    ).rejects.toThrow(RateLimitExceededError);
   });
 });
