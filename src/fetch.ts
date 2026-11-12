@@ -16,7 +16,9 @@ export async function retryFetch(
     retries = 3,
     baseDelayMs = 500,
     maxDelayMs = 30000,
+    timeoutMs,
     retryOnStatus = DEFAULT_RETRYABLE_STATUS_CODES,
+    shouldRetry,
     onRetry,
     signal,
   } = options;
@@ -28,13 +30,32 @@ export async function retryFetch(
       throw signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
     }
 
+    // Set up per-attempt timeout controller
+    const attemptController = new AbortController();
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    if (timeoutMs && timeoutMs > 0) {
+      timeoutId = setTimeout(() => {
+        attemptController.abort(new DOMException(`Request timed out after ${timeoutMs}ms`, 'TimeoutError'));
+      }, timeoutMs);
+    }
+
+    const abortHandler = () => attemptController.abort(signal?.reason);
+    signal?.addEventListener('abort', abortHandler, { once: true });
+
     try {
       const response = await fetch(url, {
         ...init,
-        signal: signal ?? init?.signal,
+        signal: attemptController.signal,
       });
 
-      if (retryOnStatus.includes(response.status) && attempt < retries) {
+      if (timeoutId) clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', abortHandler);
+
+      const isStatusRetryable = retryOnStatus.includes(response.status);
+      const customRetry = shouldRetry ? shouldRetry(response, attempt) : isStatusRetryable;
+
+      if (customRetry && attempt < retries) {
         const headerDelay = parseRateLimitDelay(response.headers);
         const backoffDelay = computeJitterDelay(attempt, baseDelayMs, maxDelayMs);
         const chosenDelay = Math.min(maxDelayMs, headerDelay ?? backoffDelay);
@@ -47,11 +68,19 @@ export async function retryFetch(
 
       return response;
     } catch (error) {
-      if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
-        throw error;
+      if (timeoutId) clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', abortHandler);
+
+      // Do not retry intentional outer aborts
+      if (signal?.aborted) {
+        throw signal.reason ?? error;
       }
 
-      if (isTransientNetworkError(error) && attempt < retries) {
+      const isTimeout = error instanceof Error && error.name === 'TimeoutError';
+      const isNetworkDrop = isTransientNetworkError(error);
+      const customRetry = shouldRetry ? shouldRetry(error, attempt) : (isNetworkDrop || isTimeout);
+
+      if (customRetry && attempt < retries) {
         const chosenDelay = computeJitterDelay(attempt, baseDelayMs, maxDelayMs);
         onRetry?.(error, attempt + 1, chosenDelay);
         await sleep(chosenDelay, signal);

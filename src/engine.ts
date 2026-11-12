@@ -17,19 +17,17 @@ export function computeJitterDelay(
 }
 
 /**
- * Safely extracts a header value case-insensitively across Headers, records, or tuples.
+ * Safely extracts a header value case-insensitively across Headers instances, records, or tuples.
  */
 export function getHeader(headers: HeaderSource, name: string): string | null {
   if (!headers) return null;
 
   const target = name.toLowerCase();
 
-  // Native Web API Headers
   if (typeof (headers as Headers).get === 'function') {
     return (headers as Headers).get(target);
   }
 
-  // Array of tuples
   if (Array.isArray(headers)) {
     for (const [key, value] of headers) {
       if (key.toLowerCase() === target) {
@@ -39,7 +37,6 @@ export function getHeader(headers: HeaderSource, name: string): string | null {
     return null;
   }
 
-  // Plain object
   if (typeof headers === 'object') {
     for (const key of Object.keys(headers)) {
       if (key.toLowerCase() === target) {
@@ -60,13 +57,11 @@ export function parseDurationToMs(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
 
-  // Pure numeric string represents seconds
   if (/^\d+(\.\d+)?$/.test(trimmed)) {
     const sec = parseFloat(trimmed);
     return isNaN(sec) ? null : Math.max(0, Math.floor(sec * 1000));
   }
 
-  // Units match
   const regex = /(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)/gi;
   let match: RegExpExecArray | null;
   let totalMs = 0;
@@ -100,14 +95,23 @@ export function parseDurationToMs(value: string): number | null {
 }
 
 /**
- * Inspects rate-limiting headers and extracts sleep delay in milliseconds:
- * - retry-after (seconds or HTTP date)
- * - x-ratelimit-reset-requests (OpenAI format)
- * - x-ratelimit-reset-tokens (Anthropic format)
+ * Exhaustively checks provider headers across:
+ * - RFC 7231 / RFC 6585 standard `retry-after`
+ * - OpenAI: `x-ratelimit-reset-requests`, `x-ratelimit-reset-tokens`
+ * - Anthropic: `anthropic-ratelimit-requests-reset`, `anthropic-ratelimit-tokens-reset`
+ * - Groq / DeepSeek / Mistral: `x-ratelimit-reset-total`, `retry-after-ms`
  */
 export function parseRateLimitDelay(headers: HeaderSource): number | null {
   if (!headers) return null;
 
+  // 1. Direct milliseconds header (Groq, custom proxies)
+  const retryAfterMs = getHeader(headers, 'retry-after-ms');
+  if (retryAfterMs) {
+    const parsed = parseFloat(retryAfterMs);
+    if (!isNaN(parsed)) return Math.max(0, Math.floor(parsed));
+  }
+
+  // 2. Standard Retry-After (seconds or RFC 1123 HTTP Date)
   const retryAfter = getHeader(headers, 'retry-after');
   if (retryAfter) {
     if (/^\d+(\.\d+)?$/.test(retryAfter.trim())) {
@@ -121,23 +125,34 @@ export function parseRateLimitDelay(headers: HeaderSource): number | null {
     }
   }
 
-  const openaiReset = getHeader(headers, 'x-ratelimit-reset-requests');
-  if (openaiReset) {
-    const durationMs = parseDurationToMs(openaiReset);
-    if (durationMs !== null) return durationMs;
-  }
+  // 3. Provider-specific reset headers
+  const candidateKeys = [
+    'x-ratelimit-reset-requests',
+    'x-ratelimit-reset-tokens',
+    'anthropic-ratelimit-requests-reset',
+    'anthropic-ratelimit-tokens-reset',
+    'x-ratelimit-reset-total',
+  ];
 
-  const anthropicReset = getHeader(headers, 'x-ratelimit-reset-tokens');
-  if (anthropicReset) {
-    const durationMs = parseDurationToMs(anthropicReset);
-    if (durationMs !== null) return durationMs;
+  for (const key of candidateKeys) {
+    const raw = getHeader(headers, key);
+    if (raw) {
+      const ms = parseDurationToMs(raw);
+      if (ms !== null) return ms;
+
+      // Handle epoch timestamp formats
+      const epochSec = parseFloat(raw);
+      if (!isNaN(epochSec) && epochSec > 1000000000) {
+        return Math.max(0, Math.floor(epochSec * 1000 - Date.now()));
+      }
+    }
   }
 
   return null;
 }
 
 /**
- * Detects transient network drop errors.
+ * Detects transient network drop errors across Node, Bun, Deno, and browsers.
  */
 export function isTransientNetworkError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
@@ -147,18 +162,27 @@ export function isTransientNetworkError(error: unknown): boolean {
 
   if (error.name === 'TypeError' && msg.includes('fetch failed')) return true;
 
-  const transientCodes = ['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED'];
+  const transientCodes = [
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'ENOTFOUND',
+    'EAI_AGAIN',
+    'ECONNREFUSED',
+    'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_SOCKET',
+  ];
   if (code && transientCodes.includes(code)) return true;
 
   return (
     msg.includes('network error') ||
     msg.includes('socket hang up') ||
-    msg.includes('timeout')
+    msg.includes('terminated') ||
+    msg.includes('econnreset')
   );
 }
 
 /**
- * Sleep helper respecting AbortSignal cancellation.
+ * Promisified sleep that respects AbortSignal cancellation.
  */
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {

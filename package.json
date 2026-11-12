@@ -1,7 +1,7 @@
 {
   "name": "@rohan9024/retrykit",
-  "version": "0.1.0",
-  "description": "Zero-dependency, header-aware network retry library tailored for LLM APIs and fetch.",
+  "version": "0.2.0",
+  "description": "The ultimate zero-dependency, header-aware retry engine and circuit breaker for LLM APIs (OpenAI, Anthropic, DeepSeek, Groq).",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -27,28 +27,27 @@
   },
   "keywords": [
     "retry",
-    "fetch",
     "llm",
     "openai",
     "anthropic",
-    "backoff",
-    "jitter",
-    "exponential-backoff",
+    "deepseek",
+    "groq",
+    "fetch",
+    "circuit-breaker",
+    "streaming",
     "rate-limit",
-    "retry-after"
+    "backoff",
+    "jitter"
   ],
-  "author": "",
+  "author": "rohan9024",
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^22.20.5",
-    "tsup": "^8.5.1",
-    "typescript": "^5.9.3",
-    "vitest": "^2.1.9"
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
   },
   "engines": {
     "node": ">=18.0.0"
-  },
-  "directories": {
-    "test": "test"
   }
 }

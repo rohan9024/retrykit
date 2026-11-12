@@ -26,6 +26,7 @@ export async function retry<T>(
     baseDelayMs = 500,
     maxDelayMs = 30000,
     retryOnStatus = DEFAULT_RETRYABLE_STATUS_CODES,
+    shouldRetry,
     onRetry,
     signal,
   } = options;
@@ -54,8 +55,11 @@ export async function retry<T>(
 
       const isStatusRetryable = statusCode !== undefined && retryOnStatus.includes(statusCode);
       const isNetworkRetryable = isTransientNetworkError(error);
+      const customRetry = shouldRetry
+        ? shouldRetry(error, attempt)
+        : (isStatusRetryable || isNetworkRetryable);
 
-      if (!isStatusRetryable && !isNetworkRetryable) {
+      if (!customRetry) {
         throw error;
       }
 
