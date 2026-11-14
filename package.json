@@ -1,7 +1,7 @@
 {
   "name": "@rohan9024/retrykit",
-  "version": "0.2.2",
-  "description": "The ultimate zero-dependency, header-aware retry engine and circuit breaker for LLM APIs (OpenAI, Anthropic, DeepSeek, Groq).",
+  "version": "0.3.0",
+  "description": "Provider-aware retries, rate-limit intelligence, and request resilience for Node.js and TypeScript AI applications.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -16,8 +16,6 @@
     "dist",
     "README.md",
     "llms.txt",
-    "llms-full.txt",
-    "AGENTS.md",
     "LICENSE"
   ],
   "scripts": {
@@ -25,47 +23,40 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run test && npm run build"
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rohan9024/retrykit.git"
+  },
+  "homepage": "https://github.com/rohan9024/retrykit#readme",
+  "bugs": {
+    "url": "https://github.com/rohan9024/retrykit/issues"
   },
   "keywords": [
     "retry",
+    "resilience",
+    "rate-limit",
     "llm",
     "openai",
     "anthropic",
-    "deepseek",
     "groq",
+    "azure-openai",
+    "gemini",
     "fetch",
-    "circuit-breaker",
-    "streaming",
-    "rate-limit",
     "backoff",
-    "jitter",
-    "llm",
-    "llm-retry",
-    "retry",
-    "retry-engine",
-    "openai",
-    "anthropic",
-    "deepseek",
-    "groq",
-    "mistral",
-    "rate-limit",
-    "rate-limit-handler",
-    "exponential-backoff",
     "circuit-breaker",
-    "typescript",
-    "fetch",
-    "llm-infrastructure"
+    "streaming"
   ],
   "author": "rohan9024",
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "tsup": "^8.3.0",
-    "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "@types/node": "^22.10.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.8"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }
