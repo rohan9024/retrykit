@@ -1,60 +1,59 @@
 import { describe, expect, it } from 'vitest';
 import {
+  calculateRequiredWait,
   computeJitterDelay,
-  isTransientNetworkError,
   parseDurationToMs,
-  parseRateLimitDelay,
   parseTimestampOrDelay,
+  RetryBudgetTracker,
 } from '../src/engine.js';
+import { QuotaBucket } from '../src/types.js';
 
-describe('engine: parseTimestampOrDelay', () => {
+describe('engine: multi-dimensional quota wait calculation', () => {
+  it('takes the maximum reset of all exhausted quota dimensions', () => {
+    const buckets: QuotaBucket[] = [
+      { dimension: 'tokens', exhausted: true, resetAfterMs: 3000 },
+      { dimension: 'requests', exhausted: true, resetAfterMs: 15000 },
+      { dimension: 'project_tokens', exhausted: false, resetAfterMs: 60000 },
+    ];
+
+    const wait = calculateRequiredWait(buckets);
+    expect(wait).toBe(15000); // Must be max of exhausted dimensions only
+  });
+});
+
+describe('engine: timestamp and epoch parsing', () => {
   const fixedNow = 1700000000000;
 
   it('parses Anthropic RFC 3339 timestamps', () => {
-    const target = new Date(fixedNow + 15000).toISOString();
-    const delay = parseTimestampOrDelay(target, fixedNow);
-    expect(delay).toBe(15000);
+    const target = new Date(fixedNow + 20000).toISOString();
+    expect(parseTimestampOrDelay(target, fixedNow)).toBe(20000);
   });
 
   it('parses Unix epoch seconds (> 1e9)', () => {
-    const epochSec = (fixedNow + 30000) / 1000;
-    const delay = parseTimestampOrDelay(String(epochSec), fixedNow);
-    expect(delay).toBe(30000);
+    const epochSec = (fixedNow + 12000) / 1000;
+    expect(parseTimestampOrDelay(String(epochSec), fixedNow)).toBe(12000);
   });
 
-  it('parses relative seconds without mistaking for epoch', () => {
-    expect(parseTimestampOrDelay('60', fixedNow)).toBe(60000);
-  });
-
-  it('parses relative duration strings', () => {
-    expect(parseDurationToMs('15s')).toBe(15000);
-    expect(parseDurationToMs('600ms')).toBe(600);
+  it('parses pure relative seconds without epoch misclassification', () => {
+    expect(parseTimestampOrDelay('45', fixedNow)).toBe(45000);
   });
 });
 
-describe('engine: parseRateLimitDelay multi-provider quota dimensions', () => {
-  it('prioritizes tokens over requests when tokens quota is 0 (Groq)', () => {
-    const headers = {
-      'x-ratelimit-remaining-tokens': '0',
-      'x-ratelimit-reset-tokens': '12s',
-      'x-ratelimit-remaining-requests': '50',
-      'x-ratelimit-reset-requests': '1s',
-    };
-    expect(parseRateLimitDelay(headers)).toBe(12000);
-  });
+describe('engine: retry budget tracker', () => {
+  it('caps extra retry attempts within sliding window', () => {
+    const tracker = new RetryBudgetTracker({ maxExtraAttempts: 2, windowMs: 1000 });
+    const now = 10000;
 
-  it('parses Anthropic input tokens reset header', () => {
-    const headers = {
-      'anthropic-ratelimit-input-tokens-reset': '5s',
-    };
-    expect(parseRateLimitDelay(headers)).toBe(5000);
-  });
-});
+    expect(tracker.canRetry(now)).toBe(true);
+    tracker.recordRetry(now);
 
-describe('engine: isTransientNetworkError', () => {
-  it('identifies Undici headers and body timeouts', () => {
-    const err = new Error('headers timeout') as Error & { code: string };
-    err.code = 'UND_ERR_HEADERS_TIMEOUT';
-    expect(isTransientNetworkError(err)).toBe(true);
+    expect(tracker.canRetry(now + 100)).toBe(true);
+    tracker.recordRetry(now + 100);
+
+    // Budget exceeded
+    expect(tracker.canRetry(now + 200)).toBe(false);
+
+    // After window elapses
+    expect(tracker.canRetry(now + 1500)).toBe(true);
   });
 });

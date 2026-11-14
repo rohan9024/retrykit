@@ -1,20 +1,21 @@
-import { computeJitterDelay, sleep } from './engine.js';
+import {
+  computeJitterDelay,
+  DeadlineExceededError,
+  sleep,
+} from './engine.js';
 import { ResumableStreamOptions } from './types.js';
 
 export class StreamDuplicatePreventionError extends Error {
   constructor() {
     super(
-      'Stream failed mid-transmission without a checkpoint cursor. Aborted to prevent yielding duplicate tokens. Supply getCheckpoint or allowRestartWithoutCheckpoint: true.'
+      'Stream failed mid-transmission without a checkpoint cursor. Aborted to prevent duplicate tokens. Supply getCheckpoint or allowRestartWithoutCheckpoint: true.'
     );
     this.name = 'StreamDuplicatePreventionError';
   }
 }
 
 /**
- * Resilient streaming with checkpoint resumption.
- * If a stream drops mid-sentence:
- * - If getCheckpoint is provided, it resumes seamlessly from that cursor.
- * - If uncheckpointed and chunks were already emitted, it fast-fails to prevent duplicate tokens.
+ * Resilient stream iterator with checkpoint cursor resumption and deadline enforcement.
  */
 export async function* retryStream<T, C = unknown>(
   options: ResumableStreamOptions<T, C>
@@ -27,10 +28,13 @@ export async function* retryStream<T, C = unknown>(
     retries = 3,
     baseDelayMs = 500,
     maxDelayMs = 30000,
+    maxElapsedTimeMs,
+    shouldRetry,
     onRetry,
     signal,
   } = options;
 
+  const startTime = Date.now();
   let attempt = 0;
   let currentCheckpoint: C | undefined = initialCheckpoint;
   let yieldedInCurrentSession = false;
@@ -38,6 +42,10 @@ export async function* retryStream<T, C = unknown>(
   while (true) {
     if (signal?.aborted) {
       throw signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+    }
+
+    if (maxElapsedTimeMs && Date.now() - startTime >= maxElapsedTimeMs) {
+      throw new DeadlineExceededError(Date.now() - startTime, maxElapsedTimeMs);
     }
 
     try {
@@ -60,12 +68,12 @@ export async function* retryStream<T, C = unknown>(
         throw error;
       }
 
-      // Prevent duplicate generation if no checkpoint handler is configured
       if (yieldedInCurrentSession && !getCheckpoint && !allowRestartWithoutCheckpoint) {
         throw new StreamDuplicatePreventionError();
       }
 
-      if (attempt >= retries) {
+      const customRetry = shouldRetry ? shouldRetry(error, attempt) : true;
+      if (!customRetry || attempt >= retries) {
         throw error;
       }
 

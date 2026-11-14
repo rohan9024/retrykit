@@ -1,12 +1,15 @@
+import { findProviderAdapter } from './adapters.js';
 import {
   computeJitterDelay,
+  DeadlineExceededError,
   DEFAULT_RETRYABLE_STATUS_CODES,
   isTransientNetworkError,
-  parseRateLimitDelay,
   RateLimitExceededError,
+  RetryBudgetExceededError,
+  RetryBudgetTracker,
   sleep,
 } from './engine.js';
-import { RetryOptions } from './types.js';
+import { FetchRetryOptions } from './types.js';
 
 function combineAbortSignals(signals: (AbortSignal | null | undefined)[]): {
   signal: AbortSignal;
@@ -40,40 +43,39 @@ function combineAbortSignals(signals: (AbortSignal | null | undefined)[]): {
   return { signal: controller.signal, cleanup };
 }
 
-export async function retryFetch(
-  url: string | URL | Request,
-  init?: RequestInit,
-  options: RetryOptions = {}
+/**
+ * Replay-safe request factory supporting dynamic body recreation on every retry.
+ */
+export async function retryRequest(
+  requestFactory: (attempt: number, signal: AbortSignal) => Promise<Response>,
+  options: FetchRetryOptions = {}
 ): Promise<Response> {
   const {
     retries = 3,
     baseDelayMs = 500,
     maxDelayMs = 30000,
     timeoutMs,
+    maxElapsedTimeMs,
+    retryBudget,
     exceedsMaxDelayBehavior = 'throw',
-    retrySafety = 'all',
     retryOnStatus = DEFAULT_RETRYABLE_STATUS_CODES,
+    provider,
     shouldRetry,
     onRetry,
     signal,
   } = options;
 
-  // Method safety check
-  const requestMethod = (
-    init?.method ?? (url instanceof Request ? url.method : 'GET')
-  ).toUpperCase();
-
-  const isSafeMethod = ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'].includes(requestMethod);
-  if (retrySafety === 'safe-methods-only' && !isSafeMethod) {
-    // Non-idempotent request; execute once without retrying
-    return fetch(url, init);
-  }
-
+  const budgetTracker = retryBudget ? new RetryBudgetTracker(retryBudget) : undefined;
+  const startTime = Date.now();
   let attempt = 0;
 
   while (true) {
     if (signal?.aborted) {
       throw signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+    }
+
+    if (maxElapsedTimeMs && Date.now() - startTime >= maxElapsedTimeMs) {
+      throw new DeadlineExceededError(Date.now() - startTime, maxElapsedTimeMs);
     }
 
     const attemptController = new AbortController();
@@ -88,17 +90,12 @@ export async function retryFetch(
     }
 
     const { signal: combinedSignal, cleanup } = combineAbortSignals([
-      url instanceof Request ? url.signal : undefined,
-      init?.signal,
       signal,
       attemptController.signal,
     ]);
 
     try {
-      const response = await fetch(url, {
-        ...init,
-        signal: combinedSignal,
-      });
+      const response = await requestFactory(attempt, combinedSignal);
 
       if (timeoutId) clearTimeout(timeoutId);
       cleanup();
@@ -107,7 +104,6 @@ export async function retryFetch(
       const customRetry = shouldRetry ? shouldRetry(response, attempt) : isStatusRetryable;
 
       if (customRetry && attempt < retries) {
-        // Free response body socket to prevent resource exhaustion
         if (response.body && !response.bodyUsed) {
           try {
             await response.body.cancel();
@@ -116,7 +112,14 @@ export async function retryFetch(
           }
         }
 
-        const headerDelay = parseRateLimitDelay(response.headers);
+        if (budgetTracker && !budgetTracker.canRetry()) {
+          throw new RetryBudgetExceededError();
+        }
+
+        const adapter = findProviderAdapter(provider ?? response.url, response.headers);
+        const rateLimitResult = adapter.parseRateLimit(response.headers);
+        const headerDelay = rateLimitResult ? rateLimitResult.retryAfterMs : null;
+
         if (headerDelay !== null && headerDelay > maxDelayMs) {
           if (exceedsMaxDelayBehavior === 'throw') {
             throw new RateLimitExceededError(headerDelay, maxDelayMs);
@@ -124,10 +127,9 @@ export async function retryFetch(
         }
 
         const backoffDelay = computeJitterDelay(attempt, baseDelayMs, maxDelayMs);
-        const chosenDelay = headerDelay !== null
-          ? Math.min(maxDelayMs, headerDelay)
-          : backoffDelay;
+        const chosenDelay = headerDelay !== null ? Math.min(maxDelayMs, headerDelay) : backoffDelay;
 
+        budgetTracker?.recordRetry();
         onRetry?.(response, attempt + 1, chosenDelay);
         await sleep(chosenDelay, signal);
         attempt++;
@@ -143,10 +145,15 @@ export async function retryFetch(
 
       const isTimeout = error instanceof Error && error.name === 'TimeoutError';
       const isNetworkDrop = isTransientNetworkError(error);
-      const customRetry = shouldRetry ? shouldRetry(error, attempt) : (isNetworkDrop || isTimeout);
+      const customRetry = shouldRetry ? shouldRetry(error, attempt) : isNetworkDrop || isTimeout;
 
       if (customRetry && attempt < retries) {
+        if (budgetTracker && !budgetTracker.canRetry()) {
+          throw new RetryBudgetExceededError();
+        }
+
         const chosenDelay = computeJitterDelay(attempt, baseDelayMs, maxDelayMs);
+        budgetTracker?.recordRetry();
         onRetry?.(error, attempt + 1, chosenDelay);
         await sleep(chosenDelay, signal);
         attempt++;
@@ -156,4 +163,36 @@ export async function retryFetch(
       throw error;
     }
   }
+}
+
+/**
+ * Drop-in replacement for standard native fetch.
+ */
+export async function retryFetch(
+  url: string | URL | Request,
+  init?: RequestInit,
+  options: FetchRetryOptions = {}
+): Promise<Response> {
+  const requestMethod = (
+    init?.method ?? (url instanceof Request ? url.method : 'GET')
+  ).toUpperCase();
+
+  const isSafeMethod = ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'].includes(requestMethod);
+  const targetUrl = url instanceof Request ? url.url : String(url);
+
+  if (options.retrySafety === 'safe-methods-only' && !isSafeMethod) {
+    return retryRequest(
+      async (_, signal) => {
+        return fetch(url, { ...init, signal });
+      },
+      { ...options, retries: 0 }
+    );
+  }
+
+  return retryRequest(
+    async (_, signal) => {
+      return fetch(url, { ...init, signal });
+    },
+    { ...options, provider: options.provider ?? targetUrl }
+  );
 }

@@ -8,7 +8,7 @@ export class CircuitBreakerOpenError extends Error {
 }
 
 /**
- * Enterprise-grade Circuit Breaker with atomic half-open probe reservation
+ * Enterprise circuit breaker with atomic half-open probe reservation
  * and configurable failure classification.
  */
 export class CircuitBreaker {
@@ -32,8 +32,10 @@ export class CircuitBreaker {
     this.shouldCountFailure =
       options.shouldCountFailure ??
       ((error: unknown) => {
-        // Do not trip the breaker on client-side aborts or circuit breaker rejections
-        if (error instanceof Error && (error.name === 'AbortError' || error.name === 'CircuitBreakerOpenError')) {
+        if (
+          error instanceof Error &&
+          (error.name === 'AbortError' || error.name === 'CircuitBreakerOpenError')
+        ) {
           return false;
         }
         return true;
@@ -58,7 +60,6 @@ export class CircuitBreaker {
     }
 
     if (currentState === 'HALF_OPEN') {
-      // Synchronously reserve a probe slot before awaiting
       if (this.halfOpenCallsInFlight >= this.halfOpenMaxCalls) {
         throw new CircuitBreakerOpenError('Circuit breaker is HALF_OPEN and test probe is in progress.');
       }
@@ -73,16 +74,12 @@ export class CircuitBreaker {
       if (this.shouldCountFailure(error)) {
         this.recordFailure();
       } else if (currentState === 'HALF_OPEN') {
-        // If the probe failed with a non-infrastructure error (e.g. client abort), release probe slot
         this.halfOpenCallsInFlight = Math.max(0, this.halfOpenCallsInFlight - 1);
       }
       throw error;
     }
   }
 
-  /**
-   * Helper for fetch calls to treat HTTP 500+ or 429 as circuit breaker failures.
-   */
   public async executeFetch(
     fn: () => Promise<Response>,
     isFailureResponse: (res: Response) => boolean = (res) => res.status >= 500 || res.status === 429

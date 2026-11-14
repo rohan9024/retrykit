@@ -1,24 +1,15 @@
 
 # @rohan9024/retrykit ⚡
 
-> A zero-dependency, header-aware retry engine and circuit breaker built for reliable LLM API integrations.
+> Provider-aware retries, rate-limit intelligence, and request resilience for Node.js and TypeScript AI applications.
 
 [![npm version](https://img.shields.io/npm/v/@rohan9024/retrykit.svg)](https://www.npmjs.com/package/@rohan9024/retrykit)
-[![license](https://img.shields.io/npm/l/@rohan9024/retrykit.svg)](https://github.com/rohan9024/retrykit)
-[![bundle size](https://img.shields.io/bundlephobia/min/@rohan9024/retrykit)](https://bundlephobia.com/package/@rohan9024/retrykit)
+[![CI](https://github.com/rohan9024/retrykit/actions/workflows/ci.yml/badge.svg)](https://github.com/rohan9024/retrykit/actions)
+[![License](https://img.shields.io/npm/l/@rohan9024/retrykit.svg)](https://github.com/rohan9024/retrykit)
 
-**RetryKit** helps developers build resilient applications powered by LLM APIs such as OpenAI, Anthropic, DeepSeek, Groq, and Mistral.
+Generic retry libraries like `p-retry` and `ky` are not designed to understand multi-dimensional LLM quotas. This can lead to retry storms, unnecessary API requests, and duplicate token generation.
 
-Unlike basic retry libraries such as `p-retry` or `tenacity`, RetryKit understands provider-specific rate-limit headers and uses that information to schedule smarter retries.
-
-### Why RetryKit?
-
-- **Header-aware retries:** Parses provider-specific rate-limit reset headers.
-- **Exponential backoff with jitter:** Prevents synchronized retry storms.
-- **SSE stream resilience:** Handles mid-stream connection interruptions.
-- **Circuit breaker:** Prevents cascading failures during provider outages.
-- **Timeout protection:** Supports per-attempt request timeouts.
-- **Zero dependencies:** Lightweight and dependency-free.
+**RetryKit** provides an intelligent provider adapter registry, in-process rate-limit coordination, checkpoint-driven stream resumption, and atomic circuit breaking — with zero external runtime dependencies.
 
 ---
 
@@ -28,163 +19,164 @@ Unlike basic retry libraries such as `p-retry` or `tenacity`, RetryKit understan
 npm install @rohan9024/retrykit
 ```
 
----
+## 🚀 Key Features & Usage
 
-## 🚀 Quick Start
+### 1. Vercel AI SDK Integration
 
-### 1. Drop-in Fetch Replacement (`retryFetch`)
-
-Use `retryFetch` just like standard `fetch`, with automatic retries and rate-limit awareness.
+Integrate RetryKit directly into the Vercel AI SDK transport layer to handle rate limits and transient failures automatically.
 
 ```typescript
+import { createOpenAI } from '@ai-sdk/openai';
 import { retryFetch } from '@rohan9024/retrykit';
 
-const response = await retryFetch(
-  'https://api.openai.com/v1/chat/completions',
-  {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o',
-      messages: [
-        { role: 'user', content: 'Say hello!' }
-      ],
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  fetch: (input, init) =>
+    retryFetch(input, init, {
+      retries: 3,
+      timeoutMs: 15000,
+      maxDelayMs: 30000,
+      retrySafety: 'all',
     }),
-  },
-  {
-    retries: 4,
-    timeoutMs: 15000,
-    onRetry: (error, attempt, delayMs) => {
-      console.warn(
-        `Retry #${attempt}: Waiting ${delayMs}ms...`
-      );
-    },
-  }
-);
-
-const data = await response.json();
+});
 ```
 
-### 2. Wrap Official SDKs (`retry`)
+### 2. Provider Rate-Limit Coordinator
 
-Use RetryKit with existing SDKs such as OpenAI, Anthropic, Mistral, or Google.
+**Eliminate retry storms.**
+
+Coordinate concurrent requests in-process. When one request hits a rate limit, other queued requests pause instead of continuously hammering the provider.
 
 ```typescript
-import OpenAI from 'openai';
-import { retry } from '@rohan9024/retrykit';
+import {
+  getProviderCoordinator,
+  retryFetch,
+} from '@rohan9024/retrykit';
 
-const openai = new OpenAI();
+const coordinator = getProviderCoordinator('openai', 10);
 
-const completion = await retry(
-  () =>
-    openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        {
-          role: 'user',
-          content: 'Write a poem about resilience',
-        },
-      ],
-    }),
-  {
-    retries: 3,
-    baseDelayMs: 500,
-  }
+const response = await coordinator.schedule(() =>
+  retryFetch(
+    'https://api.openai.com/v1/chat/completions',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: 'Hello' }],
+      }),
+    },
+    {
+      retries: 3,
+      maxElapsedTimeMs: 45000,
+    }
+  )
 );
 ```
 
-### 3. Resilient Token Streaming (`retryStream`)
+### 3. Checkpoint-Driven Resilient Streaming
 
-LLM streaming connections can fail midway through generation. `retryStream` helps recover from interrupted streams.
+**Prevent duplicate generation.**
+
+Use cursor-tracked checkpoints to resume interrupted streams from the last acknowledged position.
 
 ```typescript
 import { retryStream } from '@rohan9024/retrykit';
 
-async function* tokenGenerator() {
-  const stream = await fetchLLMStream();
+for await (const chunk of retryStream({
+  createStream: async (checkpoint, attempt, signal) =>
+    fetchLLMStream({ cursor: checkpoint, signal }),
 
-  for await (const chunk of stream) {
-    yield chunk;
-  }
-}
+  getCheckpoint: (chunk) => chunk.id,
 
-for await (const chunk of retryStream(() => tokenGenerator())) {
-  process.stdout.write(chunk);
+  retries: 3,
+})) {
+  process.stdout.write(chunk.text);
 }
 ```
 
-### 4. Circuit Breaker
+### 4. Replay-Safe Request Factories
 
-Protect your application from cascading failures and unnecessary requests when an AI provider experiences an outage.
+Use `retryRequest` for non-idempotent operations and requests with bodies that cannot be safely reused, such as multipart form uploads.
+
+```typescript
+import { retryRequest } from '@rohan9024/retrykit';
+
+const response = await retryRequest(
+  async (attempt, signal) =>
+    fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: createFreshMultipartFormData(),
+      signal,
+    }),
+  {
+    retries: 3,
+  }
+);
+```
+
+### 5. Atomic Circuit Breaker
+
+Protect your application during provider outages.
+
+RetryKit's circuit breaker transitions into an OPEN state after repeated failures and enforces strict single-probe execution during HALF_OPEN recovery.
 
 ```typescript
 import { CircuitBreaker } from '@rohan9024/retrykit';
 
 const breaker = new CircuitBreaker({
-  failureThreshold: 3,
+  failureThreshold: 5,
   resetTimeoutMs: 30000,
-
-  onStateChange: (from, to) => {
-    console.log(`Circuit changed: ${from} -> ${to}`);
-  },
+  halfOpenMaxCalls: 1,
 });
 
-// Fails fast when the circuit is open
 const result = await breaker.execute(() => callUnstableAPI());
 ```
 
 ---
 
-## 🧠 Supported Provider Headers
+## 🧠 Provider Compatibility Matrix
 
-RetryKit automatically extracts retry timing information from commonly used API rate-limit headers.
-
-| Provider | Supported Headers |
+| Provider | Rate-Limit Intelligence |
 |---|---|
-| OpenAI | `x-ratelimit-reset-requests`, `x-ratelimit-reset-tokens`, `retry-after` |
-| Anthropic | `anthropic-ratelimit-requests-reset`, `anthropic-ratelimit-tokens-reset`, `retry-after` |
-| Groq / DeepSeek | `x-ratelimit-reset-total`, `retry-after-ms`, `retry-after` |
-| Standard HTTP | `Retry-After` (integer seconds or RFC 1123 HTTP dates) |
+| **OpenAI** | Evaluates requests, tokens, and project-scoped token limits. |
+| **Anthropic** | Correlates RFC 3339 reset timestamps with remaining quota headers. |
+| **Groq** | Evaluates TPM and RPD limits and respects the longest required wait time. |
+| **Azure OpenAI** | Parses native `retry-after-ms` and HTTP `Retry-After` headers. |
+| **Google Gemini** | Classifies `RESOURCE_EXHAUSTED` status codes and quota errors. |
+| **DeepSeek** | Handles transient concurrency failures through adaptive jitter backoff. |
+
+For multi-dimensional quotas, RetryKit calculates the required waiting period using:
+
+\[
+D_{\text{wait}} = \max(D_{\text{tokens}}, D_{\text{requests}})
+\]
+
+This ensures that a request respects the longest applicable rate-limit delay.
 
 ---
 
-## ⚙️ Configuration Options
-
-RetryKit provides configurable retry behavior.
+## ⚙️ Options Reference
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `retries` | `number` | `3` | Maximum retry attempts before failing |
-| `baseDelayMs` | `number` | `500` | Initial backoff delay in milliseconds |
-| `maxDelayMs` | `number` | `30000` | Maximum backoff delay |
-| `timeoutMs` | `number` | `undefined` | Per-attempt timeout in milliseconds |
-| `retryOnStatus` | `number[]` | `[408, 429, 500, 502, 503, 504]` | HTTP status codes that trigger retries |
-| `shouldRetry` | `(err, attempt) => boolean` | `undefined` | Custom retry decision logic |
-| `onRetry` | `(err, attempt, delay) => void` | `undefined` | Callback executed before each retry |
-| `signal` | `AbortSignal` | `undefined` | Abort signal for immediate cancellation |
-
----
-
-## 🛡️ Designed For
-
-- LLM-powered applications
-- AI agents and autonomous workflows
-- RAG pipelines
-- High-volume API integrations
-- Streaming chat applications
-- Production AI infrastructure
+| `retries` | `number` | `3` | Maximum retry attempts. |
+| `baseDelayMs` | `number` | `500` | Starting backoff delay in milliseconds. |
+| `maxDelayMs` | `number` | `30000` | Maximum backoff delay. |
+| `maxElapsedTimeMs` | `number` | `undefined` | Hard deadline for the entire operation. |
+| `timeoutMs` | `number` | `undefined` | Per-attempt response acquisition timeout. |
+| `retryBudget` | `RetryBudget` | `undefined` | Caps additional retry traffic within a sliding window. |
+| `retrySafety` | `'safe-methods-only' \| 'all'` | `'all'` | Controls automatic retries on non-idempotent HTTP methods. |
+| `exceedsMaxDelayBehavior` | `'throw' \| 'clamp'` | `'throw'` | Throws `RateLimitExceededError` instead of retrying earlier than the required delay. |
 
 ---
 
 ## 📄 License
 
 MIT © [rohan9024](https://github.com/rohan9024)
-
----
-
-<p align="center">
-  Built for developers who want their AI applications to be resilient. ⚡
-</p>

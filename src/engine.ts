@@ -1,4 +1,4 @@
-import { HeaderSource } from './types.js';
+import { HeaderSource, QuotaBucket, RetryBudget } from './types.js';
 
 export const DEFAULT_RETRYABLE_STATUS_CODES = [408, 429, 500, 502, 503, 504];
 
@@ -13,6 +13,49 @@ export class RateLimitExceededError extends Error {
     this.name = 'RateLimitExceededError';
     this.delayMs = delayMs;
     this.maxDelayMs = maxDelayMs;
+  }
+}
+
+export class DeadlineExceededError extends Error {
+  constructor(elapsedMs: number, maxElapsedTimeMs: number) {
+    super(`Operation exceeded total deadline: ${elapsedMs}ms > ${maxElapsedTimeMs}ms.`);
+    this.name = 'DeadlineExceededError';
+  }
+}
+
+export class RetryBudgetExceededError extends Error {
+  constructor() {
+    super('Shared retry budget exhausted. Request failed fast.');
+    this.name = 'RetryBudgetExceededError';
+  }
+}
+
+/**
+ * Sliding window retry budget tracker to prevent retry storms.
+ */
+export class RetryBudgetTracker {
+  private timestamps: number[] = [];
+  private readonly maxExtraAttempts: number;
+  private readonly windowMs: number;
+
+  constructor(budget: RetryBudget) {
+    this.maxExtraAttempts = budget.maxExtraAttempts;
+    this.windowMs = budget.windowMs;
+  }
+
+  public canRetry(now: number = Date.now()): boolean {
+    this.prune(now);
+    return this.timestamps.length < this.maxExtraAttempts;
+  }
+
+  public recordRetry(now: number = Date.now()): void {
+    this.prune(now);
+    this.timestamps.push(now);
+  }
+
+  private prune(now: number): void {
+    const cutoff = now - this.windowMs;
+    this.timestamps = this.timestamps.filter((ts) => ts > cutoff);
   }
 }
 
@@ -62,8 +105,7 @@ export function getHeader(headers: HeaderSource, name: string): string | null {
 }
 
 /**
- * Strictly parses duration strings (e.g. "600ms", "10s", "2m", "1m30s").
- * Does NOT accept plain integers without units.
+ * Strictly parses duration strings (e.g., "600ms", "10s", "2m", "1m30s").
  */
 export function parseDurationToMs(value: string): number | null {
   const trimmed = value.trim();
@@ -93,18 +135,12 @@ export function parseDurationToMs(value: string): number | null {
 
 /**
  * Deterministically parses a header value representing a timestamp or delay.
- * Order of interpretation:
- * 1. ISO 8601 / RFC 3339 / RFC 1123 date strings
- * 2. Relative duration strings ("10s", "500ms")
- * 3. Unix epoch milliseconds (> 1e11)
- * 4. Unix epoch seconds (> 1e9)
- * 5. Relative seconds (standard integer/float)
  */
 export function parseTimestampOrDelay(value: string, now: number = Date.now()): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
 
-  // 1. Date string (RFC 3339 or RFC 1123)
+  // Date format (RFC 3339, ISO 8601, RFC 1123)
   if (trimmed.includes(':') || trimmed.includes('T') || trimmed.includes('-') || trimmed.includes(',')) {
     const parsed = Date.parse(trimmed);
     if (!Number.isNaN(parsed)) {
@@ -112,7 +148,7 @@ export function parseTimestampOrDelay(value: string, now: number = Date.now()): 
     }
   }
 
-  // 2. Relative duration string with units ("15s", "600ms")
+  // Relative duration string with units ("15s", "600ms")
   const duration = parseDurationToMs(trimmed);
   if (duration !== null) {
     return duration;
@@ -123,15 +159,15 @@ export function parseTimestampOrDelay(value: string, now: number = Date.now()): 
     const num = parseFloat(trimmed);
     if (Number.isNaN(num)) return null;
 
-    // 3. Epoch milliseconds
+    // Epoch milliseconds (> 1e11)
     if (num > 100000000000) {
       return Math.max(0, Math.floor(num - now));
     }
-    // 4. Epoch seconds
+    // Epoch seconds (> 1e9)
     if (num > 1000000000) {
       return Math.max(0, Math.floor(num * 1000 - now));
     }
-    // 5. Relative seconds
+    // Relative seconds
     return Math.max(0, Math.floor(num * 1000));
   }
 
@@ -139,64 +175,13 @@ export function parseTimestampOrDelay(value: string, now: number = Date.now()): 
 }
 
 /**
- * Provider-aware header parser:
- * - Groq: Checks remaining quotas to prioritize token vs request resets.
- * - Anthropic: RFC 3339 timestamps and input/output reset headers.
- * - OpenAI: Request/token reset durations.
- * - Standard HTTP: Retry-After.
+ * Calculates required wait across multi-dimensional quota buckets:
+ * D_wait = max(D_tokens, D_requests) for all exhausted dimensions.
  */
-export function parseRateLimitDelay(headers: HeaderSource, now: number = Date.now()): number | null {
-  if (!headers) return null;
-
-  // Direct milliseconds header
-  const retryAfterMs = getHeader(headers, 'retry-after-ms');
-  if (retryAfterMs) {
-    const parsed = parseFloat(retryAfterMs);
-    if (!Number.isNaN(parsed)) return Math.max(0, Math.floor(parsed));
-  }
-
-  // Standard Retry-After
-  const retryAfter = getHeader(headers, 'retry-after');
-  if (retryAfter) {
-    const delay = parseTimestampOrDelay(retryAfter, now);
-    if (delay !== null) return delay;
-  }
-
-  // Groq multi-dimension quota selection
-  const remainingTokens = getHeader(headers, 'x-ratelimit-remaining-tokens');
-  const remainingRequests = getHeader(headers, 'x-ratelimit-remaining-requests');
-  const resetTokens = getHeader(headers, 'x-ratelimit-reset-tokens');
-  const resetRequests = getHeader(headers, 'x-ratelimit-reset-requests');
-
-  if (remainingTokens === '0' && resetTokens) {
-    const delay = parseTimestampOrDelay(resetTokens, now);
-    if (delay !== null) return delay;
-  }
-  if (remainingRequests === '0' && resetRequests) {
-    const delay = parseTimestampOrDelay(resetRequests, now);
-    if (delay !== null) return delay;
-  }
-
-  // Anthropic RFC 3339 and token dimension reset headers
-  const candidateKeys = [
-    'anthropic-ratelimit-tokens-reset',
-    'anthropic-ratelimit-input-tokens-reset',
-    'anthropic-ratelimit-output-tokens-reset',
-    'anthropic-ratelimit-requests-reset',
-    'x-ratelimit-reset-tokens',
-    'x-ratelimit-reset-requests',
-    'x-ratelimit-reset-total',
-  ];
-
-  for (const key of candidateKeys) {
-    const val = getHeader(headers, key);
-    if (val) {
-      const delay = parseTimestampOrDelay(val, now);
-      if (delay !== null) return delay;
-    }
-  }
-
-  return null;
+export function calculateRequiredWait(buckets: QuotaBucket[]): number {
+  const exhausted = buckets.filter((b) => b.exhausted && b.resetAfterMs !== undefined);
+  if (exhausted.length === 0) return 0;
+  return Math.max(0, ...exhausted.map((b) => b.resetAfterMs!));
 }
 
 /**
