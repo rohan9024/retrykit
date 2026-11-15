@@ -1,37 +1,44 @@
 import { describe, expect, it } from 'vitest';
 import { ProviderCoordinator } from '../src/coordinator.js';
 
-describe('ProviderCoordinator Shared Cooldown', () => {
-  it('pauses queued requests during active provider cooldown', async () => {
-    const coordinator = new ProviderCoordinator(5, 'test-provider');
-
-    // Trigger 50ms cooldown
-    coordinator.updateFromHeaders({ 'retry-after': '0.05' });
-    expect(coordinator.getCooldownRemaining()).toBeGreaterThan(0);
-
-    const start = Date.now();
-    await coordinator.schedule(async () => 'completed');
-    const elapsed = Date.now() - start;
-
-    expect(elapsed).toBeGreaterThanOrEqual(40);
-  });
-
-  it('limits concurrent in-flight requests', async () => {
-    const coordinator = new ProviderCoordinator(2);
-    let maxObservedInFlight = 0;
+describe('ProviderCoordinator Stress & Cooldown Re-checking', () => {
+  it('manages 100 concurrent operations without exceeding capacity', async () => {
+    const coordinator = new ProviderCoordinator({ maxConcurrentAttempts: 10 });
+    let currentInFlight = 0;
+    let maxObserved = 0;
 
     const task = async () => {
-      maxObservedInFlight = Math.max(maxObservedInFlight, coordinator.getInFlight());
-      await new Promise((r) => setTimeout(r, 20));
+      await coordinator.acquireSlot();
+      currentInFlight++;
+      maxObserved = Math.max(maxObserved, currentInFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      currentInFlight--;
+      coordinator.releaseSlot();
     };
 
-    await Promise.all([
-      coordinator.schedule(task),
-      coordinator.schedule(task),
-      coordinator.schedule(task),
-      coordinator.schedule(task),
-    ]);
+    await Promise.all(Array.from({ length: 100 }, () => task()));
+    expect(maxObserved).toBeLessThanOrEqual(10);
+    expect(coordinator.getInFlight()).toBe(0);
+  });
 
-    expect(maxObservedInFlight).toBeLessThanOrEqual(2);
+  it('re-checks cooldown when waking up from queue', async () => {
+    const coordinator = new ProviderCoordinator({ maxConcurrentAttempts: 1 });
+
+    // Acquire the only slot
+    await coordinator.acquireSlot();
+
+    let queuedTaskFinishedAfterCooldown = false;
+    const queuedTask = (async () => {
+      await coordinator.acquireSlot();
+      queuedTaskFinishedAfterCooldown = coordinator.getCooldownRemaining() === 0;
+      coordinator.releaseSlot();
+    })();
+
+    // In-flight peer sets a 30ms cooldown
+    coordinator.updateFromHeaders({ 'retry-after': '0.03' });
+    coordinator.releaseSlot();
+
+    await queuedTask;
+    expect(queuedTaskFinishedAfterCooldown).toBe(true);
   });
 });

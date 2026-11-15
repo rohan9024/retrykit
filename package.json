@@ -1,6 +1,6 @@
 {
   "name": "@rohan9024/retrykit",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Provider-aware retries, rate-limit intelligence, and request resilience for Node.js and TypeScript AI applications.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -16,6 +16,10 @@
     "dist",
     "README.md",
     "llms.txt",
+    "llms-full.txt",
+    "AGENTS.md",
+    "agent-plugin",
+    "skills",
     "LICENSE"
   ],
   "scripts": {
@@ -41,10 +45,9 @@
     "openai",
     "anthropic",
     "groq",
-    "azure-openai",
     "gemini",
+    "azure-openai",
     "fetch",
-    "backoff",
     "circuit-breaker",
     "streaming"
   ],

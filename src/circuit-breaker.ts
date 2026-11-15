@@ -7,10 +7,6 @@ export class CircuitBreakerOpenError extends Error {
   }
 }
 
-/**
- * Enterprise circuit breaker with atomic half-open probe reservation
- * and configurable failure classification.
- */
 export class CircuitBreaker {
   private state: CircuitState = 'CLOSED';
   private failureCount: number = 0;
@@ -82,12 +78,12 @@ export class CircuitBreaker {
 
   public async executeFetch(
     fn: () => Promise<Response>,
-    isFailureResponse: (res: Response) => boolean = (res) => res.status >= 500 || res.status === 429
+    isFailureResponse: (res: Response) => boolean = (res) => res.status >= 500 && res.status !== 501
   ): Promise<Response> {
     return this.execute(async () => {
       const response = await fn();
       if (isFailureResponse(response)) {
-        throw new Error(`HTTP ${response.status} classified as infrastructure failure.`);
+        throw new Error(`HTTP ${response.status} treated as infrastructure outage.`);
       }
       return response;
     });

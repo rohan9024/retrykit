@@ -1,21 +1,24 @@
-import {
-  computeJitterDelay,
-  DeadlineExceededError,
-  sleep,
-} from './engine.js';
+import { computeJitterDelay, DeadlineExceededError, sleep } from './engine.js';
 import { ResumableStreamOptions } from './types.js';
 
 export class StreamDuplicatePreventionError extends Error {
   constructor() {
     super(
-      'Stream failed mid-transmission without a checkpoint cursor. Aborted to prevent duplicate tokens. Supply getCheckpoint or allowRestartWithoutCheckpoint: true.'
+      'Stream interrupted mid-generation without a checkpoint cursor. Aborted to avoid duplicate output. Supply getCheckpoint or allowRestartWithoutCheckpoint: true.'
     );
     this.name = 'StreamDuplicatePreventionError';
   }
 }
 
+export class StreamChunkTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Awaiting next stream chunk timed out after ${timeoutMs}ms.`);
+    this.name = 'StreamChunkTimeoutError';
+  }
+}
+
 /**
- * Resilient stream iterator with checkpoint cursor resumption and deadline enforcement.
+ * Resilient stream iterator with strict checkpoint cursor acknowledgement.
  */
 export async function* retryStream<T, C = unknown>(
   options: ResumableStreamOptions<T, C>
@@ -29,6 +32,7 @@ export async function* retryStream<T, C = unknown>(
     baseDelayMs = 500,
     maxDelayMs = 30000,
     maxElapsedTimeMs,
+    timeoutMs,
     shouldRetry,
     onRetry,
     signal,
@@ -50,6 +54,7 @@ export async function* retryStream<T, C = unknown>(
 
     try {
       const stream = await createStream(currentCheckpoint, attempt, signal);
+
       for await (const chunk of stream) {
         if (signal?.aborted) {
           throw signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');

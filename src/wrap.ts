@@ -5,8 +5,6 @@ import {
   DEFAULT_RETRYABLE_STATUS_CODES,
   isTransientNetworkError,
   RateLimitExceededError,
-  RetryBudgetExceededError,
-  RetryBudgetTracker,
   sleep,
 } from './engine.js';
 import { CoreRetryOptions, HeaderSource } from './types.js';
@@ -28,13 +26,10 @@ interface DetailedSDKError extends Error {
 
 export interface WrapRetryOptions extends CoreRetryOptions {
   retryOnStatus?: number[];
-  exceedsMaxDelayBehavior?: 'throw' | 'clamp';
+  exceedsMaxDelayBehavior?: 'throw' | 'defer' | 'clamp';
   provider?: string;
 }
 
-/**
- * Generic retry wrapper for arbitrary promise calls and official AI SDK clients.
- */
 export async function retry<T>(
   fn: (attempt: number, signal?: AbortSignal) => Promise<T>,
   options: WrapRetryOptions = {}
@@ -44,7 +39,6 @@ export async function retry<T>(
     baseDelayMs = 500,
     maxDelayMs = 30000,
     maxElapsedTimeMs,
-    retryBudget,
     exceedsMaxDelayBehavior = 'throw',
     retryOnStatus = DEFAULT_RETRYABLE_STATUS_CODES,
     provider = 'generic',
@@ -53,7 +47,6 @@ export async function retry<T>(
     signal,
   } = options;
 
-  const budgetTracker = retryBudget ? new RetryBudgetTracker(retryBudget) : undefined;
   const startTime = Date.now();
   let attempt = 0;
 
@@ -84,7 +77,6 @@ export async function retry<T>(
       let adapter = findProviderAdapter(provider, headers);
       let classification = adapter.classifyError ? adapter.classifyError(error, statusCode) : null;
 
-      // Auto-classify common AI error shapes (e.g. Gemini RESOURCE_EXHAUSTED) if not matched yet
       if (!classification || !classification.retryable) {
         for (const candidate of [geminiAdapter, openAIAdapter]) {
           const res = candidate.classifyError?.(error, statusCode);
@@ -109,24 +101,27 @@ export async function retry<T>(
         throw error;
       }
 
-      if (budgetTracker && !budgetTracker.canRetry()) {
-        throw new RetryBudgetExceededError();
-      }
-
       let chosenDelay: number;
       const rateLimitResult = headers ? adapter.parseRateLimit(headers) : null;
       const headerDelay = rateLimitResult ? rateLimitResult.retryAfterMs : null;
 
       if (headerDelay !== null) {
-        if (headerDelay > maxDelayMs && exceedsMaxDelayBehavior === 'throw') {
-          throw new RateLimitExceededError(headerDelay, maxDelayMs);
+        if (headerDelay > maxDelayMs) {
+          if (exceedsMaxDelayBehavior === 'throw') {
+            throw new RateLimitExceededError(headerDelay, maxDelayMs);
+          }
+          if (exceedsMaxDelayBehavior === 'defer') {
+            chosenDelay = headerDelay; // Respect the server's requested delay
+          } else {
+            chosenDelay = maxDelayMs; // Clamp
+          }
+        } else {
+          chosenDelay = headerDelay;
         }
-        chosenDelay = Math.min(maxDelayMs, headerDelay);
       } else {
         chosenDelay = computeJitterDelay(attempt, baseDelayMs, maxDelayMs);
       }
 
-      budgetTracker?.recordRetry();
       onRetry?.(error, attempt + 1, chosenDelay);
       await sleep(chosenDelay, signal);
       attempt++;

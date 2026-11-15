@@ -1,50 +1,19 @@
-import {
-  calculateRequiredWait,
-  getHeader,
-  parseTimestampOrDelay,
-} from './engine.js';
-import { HeaderSource, ProviderAdapter, QuotaBucket, RateLimitResult } from './types.js';
+import { calculateRequiredWait, getHeader, parseTimestampOrDelay } from './engine.js';
+import { HeaderSource, ProviderAdapter, ProviderContext, QuotaBucket, RateLimitResult, RetryDecision } from './types.js';
 
-const registry: ProviderAdapter[] = [];
-
-export function registerProvider(adapter: ProviderAdapter): void {
-  const index = registry.findIndex((a) => a.name === adapter.name);
-  if (index >= 0) {
-    registry[index] = adapter;
-  } else {
-    registry.unshift(adapter); // Custom adapters take precedence
-  }
-}
-
-export function findProviderAdapter(
-  urlOrName: string,
-  headers?: HeaderSource
-): ProviderAdapter {
-  let hostname = '';
-  try {
-    hostname = new URL(urlOrName).hostname.toLowerCase();
-  } catch {
-    hostname = urlOrName.toLowerCase();
-  }
-
-  for (const adapter of registry) {
-    if (adapter.matches({ url: urlOrName, hostname, headers })) {
-      return adapter;
-    }
-  }
-
-  return genericAdapter;
+export function matchesDomain(hostname: string, targetDomain: string): boolean {
+  return hostname === targetDomain || hostname.endsWith(`.${targetDomain}`);
 }
 
 // 1. OpenAI Adapter
 export const openAIAdapter: ProviderAdapter = {
   name: 'openai',
-  matches: ({ hostname, url }) => hostname.includes('api.openai.com') || url === 'openai',
+  matches: ({ hostname, providerHint }) =>
+    matchesDomain(hostname, 'openai.com') || providerHint === 'openai',
   parseRateLimit: (headers, now = Date.now()) => {
     if (!headers) return null;
     const buckets: QuotaBucket[] = [];
 
-    // Requests
     const remReq = getHeader(headers, 'x-ratelimit-remaining-requests');
     const resetReq = getHeader(headers, 'x-ratelimit-reset-requests');
     if (resetReq) {
@@ -56,7 +25,6 @@ export const openAIAdapter: ProviderAdapter = {
       });
     }
 
-    // Tokens
     const remTok = getHeader(headers, 'x-ratelimit-remaining-tokens');
     const resetTok = getHeader(headers, 'x-ratelimit-reset-tokens');
     if (resetTok) {
@@ -68,7 +36,6 @@ export const openAIAdapter: ProviderAdapter = {
       });
     }
 
-    // Project Tokens
     const remProj = getHeader(headers, 'x-ratelimit-remaining-project-tokens');
     const resetProj = getHeader(headers, 'x-ratelimit-reset-project-tokens');
     if (resetProj) {
@@ -80,7 +47,6 @@ export const openAIAdapter: ProviderAdapter = {
       });
     }
 
-    // Fallback standard Retry-After
     const retryAfter = getHeader(headers, 'retry-after');
     if (retryAfter) {
       buckets.push({
@@ -92,28 +58,30 @@ export const openAIAdapter: ProviderAdapter = {
 
     if (buckets.length === 0) return null;
 
-    const delay = calculateRequiredWait(buckets);
+    const { requiredWaitMs, hasUnknownReset } = calculateRequiredWait(buckets);
     return {
-      retryAfterMs: delay,
+      retryAfterMs: requiredWaitMs,
       exhaustedDimensions: buckets.filter((b) => b.exhausted).map((b) => b.dimension),
       buckets,
+      hasUnknownReset,
     };
   },
   classifyError: (error, status) => {
     if (status === 429) {
-      return { retryable: true, reason: 'rate_limit_exceeded' };
+      return { retryable: true, category: 'rate_limit', reason: 'requests_or_tokens_exceeded' };
     }
     if (status === 500 || status === 503) {
-      return { retryable: true, reason: 'provider_overload' };
+      return { retryable: true, category: 'provider_overload', reason: 'openai_service_unavailable' };
     }
-    return { retryable: false, reason: 'unclassified' };
+    return { retryable: false, category: 'unknown', reason: 'unclassified_error' };
   },
 };
 
 // 2. Anthropic Adapter
 export const anthropicAdapter: ProviderAdapter = {
   name: 'anthropic',
-  matches: ({ hostname, url }) => hostname.includes('api.anthropic.com') || url === 'anthropic',
+  matches: ({ hostname, providerHint }) =>
+    matchesDomain(hostname, 'anthropic.com') || providerHint === 'anthropic',
   parseRateLimit: (headers, now = Date.now()) => {
     if (!headers) return null;
     const buckets: QuotaBucket[] = [];
@@ -153,10 +121,12 @@ export const anthropicAdapter: ProviderAdapter = {
 
     if (buckets.length === 0) return null;
 
+    const { requiredWaitMs, hasUnknownReset } = calculateRequiredWait(buckets);
     return {
-      retryAfterMs: calculateRequiredWait(buckets),
+      retryAfterMs: requiredWaitMs,
       exhaustedDimensions: buckets.filter((b) => b.exhausted).map((b) => b.dimension),
       buckets,
+      hasUnknownReset,
     };
   },
 };
@@ -164,7 +134,8 @@ export const anthropicAdapter: ProviderAdapter = {
 // 3. Groq Adapter
 export const groqAdapter: ProviderAdapter = {
   name: 'groq',
-  matches: ({ hostname, url }) => hostname.includes('api.groq.com') || url === 'groq',
+  matches: ({ hostname, providerHint }) =>
+    matchesDomain(hostname, 'groq.com') || providerHint === 'groq',
   parseRateLimit: (headers, now = Date.now()) => {
     if (!headers) return null;
     const buckets: QuotaBucket[] = [];
@@ -202,10 +173,12 @@ export const groqAdapter: ProviderAdapter = {
 
     if (buckets.length === 0) return null;
 
+    const { requiredWaitMs, hasUnknownReset } = calculateRequiredWait(buckets);
     return {
-      retryAfterMs: calculateRequiredWait(buckets),
+      retryAfterMs: requiredWaitMs,
       exhaustedDimensions: buckets.filter((b) => b.exhausted).map((b) => b.dimension),
       buckets,
+      hasUnknownReset,
     };
   },
 };
@@ -213,10 +186,10 @@ export const groqAdapter: ProviderAdapter = {
 // 4. Azure OpenAI Adapter
 export const azureAdapter: ProviderAdapter = {
   name: 'azure-openai',
-  matches: ({ hostname, url }) =>
-    hostname.includes('.openai.azure.com') ||
-    hostname.includes('.cognitiveservices.azure.com') ||
-    url === 'azure',
+  matches: ({ hostname, providerHint }) =>
+    matchesDomain(hostname, 'openai.azure.com') ||
+    matchesDomain(hostname, 'cognitiveservices.azure.com') ||
+    providerHint === 'azure-openai',
   parseRateLimit: (headers, now = Date.now()) => {
     if (!headers) return null;
 
@@ -228,6 +201,7 @@ export const azureAdapter: ProviderAdapter = {
           retryAfterMs: Math.max(0, Math.floor(ms)),
           exhaustedDimensions: ['generic'],
           buckets: [{ dimension: 'generic', resetAfterMs: ms, exhausted: true }],
+          hasUnknownReset: false,
         };
       }
     }
@@ -240,6 +214,7 @@ export const azureAdapter: ProviderAdapter = {
           retryAfterMs: delay,
           exhaustedDimensions: ['generic'],
           buckets: [{ dimension: 'generic', resetAfterMs: delay, exhausted: true }],
+          hasUnknownReset: false,
         };
       }
     }
@@ -251,8 +226,8 @@ export const azureAdapter: ProviderAdapter = {
 // 5. Google Gemini Adapter
 export const geminiAdapter: ProviderAdapter = {
   name: 'gemini',
-  matches: ({ hostname, url }) =>
-    hostname.includes('generativelanguage.googleapis.com') || url === 'gemini',
+  matches: ({ hostname, providerHint }) =>
+    matchesDomain(hostname, 'generativelanguage.googleapis.com') || providerHint === 'gemini',
   parseRateLimit: (headers, now = Date.now()) => {
     const retryAfter = getHeader(headers, 'retry-after');
     if (retryAfter) {
@@ -262,35 +237,57 @@ export const geminiAdapter: ProviderAdapter = {
           retryAfterMs: delay,
           exhaustedDimensions: ['generic'],
           buckets: [{ dimension: 'generic', resetAfterMs: delay, exhausted: true }],
+          hasUnknownReset: false,
         };
       }
     }
     return null;
   },
-  classifyError: (error) => {
+  classifyError: (error): RetryDecision => {
     const err = error as {
       status?: string;
       code?: string | number;
       message?: string;
       error?: { status?: string; code?: string | number; message?: string };
     };
+
     const statusStr = err?.error?.status ?? err?.status;
     const codeStr = err?.error?.code ?? err?.code;
-    const msg = err?.message ?? err?.error?.message ?? '';
+    const msg = (err?.message ?? err?.error?.message ?? '').toLowerCase();
+
+    if (msg.includes('billing') || msg.includes('credit') || msg.includes('spending cap')) {
+      return {
+        retryable: false,
+        category: 'billing_limit',
+        reason: 'gemini_billing_or_credit_exhausted',
+        recommendedAction: 'check_google_cloud_billing',
+      };
+    }
+
+    if (msg.includes('daily limit') || msg.includes('quota exceeded for day')) {
+      return {
+        retryable: false,
+        category: 'quota_exhausted',
+        reason: 'gemini_daily_quota_exhausted',
+        recommendedAction: 'wait_for_daily_reset_or_upgrade',
+      };
+    }
 
     if (
       statusStr === 'RESOURCE_EXHAUSTED' ||
       codeStr === 'RESOURCE_EXHAUSTED' ||
       codeStr === 429 ||
-      msg.includes('RESOURCE_EXHAUSTED')
+      msg.includes('resource_exhausted')
     ) {
       return {
         retryable: true,
-        reason: 'quota_exhausted',
-        recommendedAction: 'check_billing_or_backoff',
+        category: 'rate_limit',
+        reason: 'gemini_rate_limit_exceeded',
+        recommendedAction: 'backoff_and_retry',
       };
     }
-    return { retryable: false, reason: 'unknown' };
+
+    return { retryable: false, category: 'unknown', reason: 'unclassified_gemini_error' };
   },
 };
 
@@ -300,6 +297,7 @@ export const genericAdapter: ProviderAdapter = {
   matches: () => true,
   parseRateLimit: (headers, now = Date.now()) => {
     if (!headers) return null;
+
     const retryAfterMs = getHeader(headers, 'retry-after-ms');
     if (retryAfterMs) {
       const ms = parseFloat(retryAfterMs);
@@ -308,6 +306,7 @@ export const genericAdapter: ProviderAdapter = {
           retryAfterMs: Math.max(0, Math.floor(ms)),
           exhaustedDimensions: ['generic'],
           buckets: [{ dimension: 'generic', resetAfterMs: ms, exhausted: true }],
+          hasUnknownReset: false,
         };
       }
     }
@@ -320,6 +319,7 @@ export const genericAdapter: ProviderAdapter = {
           retryAfterMs: delay,
           exhaustedDimensions: ['generic'],
           buckets: [{ dimension: 'generic', resetAfterMs: delay, exhausted: true }],
+          hasUnknownReset: false,
         };
       }
     }
@@ -328,5 +328,62 @@ export const genericAdapter: ProviderAdapter = {
   },
 };
 
-// Register defaults
-registry.push(openAIAdapter, anthropicAdapter, groqAdapter, azureAdapter, geminiAdapter);
+export class ProviderRegistry {
+  private adapters: ProviderAdapter[] = [];
+
+  constructor(initialAdapters: ProviderAdapter[] = []) {
+    for (const adapter of initialAdapters) {
+      this.register(adapter);
+    }
+  }
+
+  public register(adapter: ProviderAdapter): void {
+    const idx = this.adapters.findIndex((a) => a.name === adapter.name);
+    if (idx >= 0) {
+      this.adapters[idx] = adapter;
+    } else {
+      this.adapters.unshift(adapter);
+    }
+  }
+
+  public unregister(name: string): boolean {
+    const initial = this.adapters.length;
+    this.adapters = this.adapters.filter((a) => a.name !== name);
+    return this.adapters.length < initial;
+  }
+
+  public find(urlOrName: string, headers?: HeaderSource, providerHint?: string): ProviderAdapter {
+    let hostname = '';
+    try {
+      hostname = new URL(urlOrName).hostname.toLowerCase();
+    } catch {
+      hostname = urlOrName.toLowerCase();
+    }
+
+    const context: ProviderContext = { url: urlOrName, hostname, headers, providerHint };
+    for (const adapter of this.adapters) {
+      if (adapter.matches(context)) {
+        return adapter;
+      }
+    }
+
+    return genericAdapter;
+  }
+}
+
+// Initialized AFTER all adapter constants are created
+export const defaultRegistry = new ProviderRegistry([
+  openAIAdapter,
+  anthropicAdapter,
+  groqAdapter,
+  azureAdapter,
+  geminiAdapter,
+]);
+
+export function registerProvider(adapter: ProviderAdapter): void {
+  defaultRegistry.register(adapter);
+}
+
+export function findProviderAdapter(urlOrName: string, headers?: HeaderSource, providerHint?: string): ProviderAdapter {
+  return defaultRegistry.find(urlOrName, headers, providerHint);
+}

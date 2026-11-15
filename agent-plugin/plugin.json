@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1",
+  "name_for_model": "retrykit",
+  "name_for_human": "RetryKit",
+  "description_for_model": "Reliability toolkit for Node.js/TypeScript applications calling LLMs (OpenAI, Anthropic, Groq, Gemini). Provides provider-aware retries, rate-limit coordination, streaming recovery, and circuit breakers.",
+  "description_for_human": "Automated network resilience and rate-limit coordination for AI applications.",
+  "auth": {
+    "type": "none"
+  },
+  "api": {
+    "type": "openapi",
+    "url": "https://raw.githubusercontent.com/rohan9024/retrykit/main/skills/retrykit-integration/SKILL.md"
+  },
+  "logo_url": "https://raw.githubusercontent.com/rohan9024/retrykit/main/logo.png",
+  "contact_email": "rohan@example.com",
+  "legal_info_url": "https://github.com/rohan9024/retrykit/blob/main/LICENSE"
+}

@@ -5,13 +5,12 @@ import {
   DEFAULT_RETRYABLE_STATUS_CODES,
   isTransientNetworkError,
   RateLimitExceededError,
-  RetryBudgetExceededError,
-  RetryBudgetTracker,
+  safelyCancelDiscardedBody,
   sleep,
 } from './engine.js';
 import { FetchRetryOptions } from './types.js';
 
-function combineAbortSignals(signals: (AbortSignal | null | undefined)[]): {
+export function combineAbortSignals(signals: (AbortSignal | null | undefined)[]): {
   signal: AbortSignal;
   cleanup: () => void;
 } {
@@ -43,9 +42,6 @@ function combineAbortSignals(signals: (AbortSignal | null | undefined)[]): {
   return { signal: controller.signal, cleanup };
 }
 
-/**
- * Replay-safe request factory supporting dynamic body recreation on every retry.
- */
 export async function retryRequest(
   requestFactory: (attempt: number, signal: AbortSignal) => Promise<Response>,
   options: FetchRetryOptions = {}
@@ -56,16 +52,14 @@ export async function retryRequest(
     maxDelayMs = 30000,
     timeoutMs,
     maxElapsedTimeMs,
-    retryBudget,
     exceedsMaxDelayBehavior = 'throw',
     retryOnStatus = DEFAULT_RETRYABLE_STATUS_CODES,
-    provider,
+    providerHint,
     shouldRetry,
     onRetry,
     signal,
   } = options;
 
-  const budgetTracker = retryBudget ? new RetryBudgetTracker(retryBudget) : undefined;
   const startTime = Date.now();
   let attempt = 0;
 
@@ -104,19 +98,9 @@ export async function retryRequest(
       const customRetry = shouldRetry ? shouldRetry(response, attempt) : isStatusRetryable;
 
       if (customRetry && attempt < retries) {
-        if (response.body && !response.bodyUsed) {
-          try {
-            await response.body.cancel();
-          } catch {
-            /* ignore */
-          }
-        }
+        await safelyCancelDiscardedBody(response);
 
-        if (budgetTracker && !budgetTracker.canRetry()) {
-          throw new RetryBudgetExceededError();
-        }
-
-        const adapter = findProviderAdapter(provider ?? response.url, response.headers);
+        const adapter = findProviderAdapter(response.url, response.headers, providerHint);
         const rateLimitResult = adapter.parseRateLimit(response.headers);
         const headerDelay = rateLimitResult ? rateLimitResult.retryAfterMs : null;
 
@@ -129,7 +113,6 @@ export async function retryRequest(
         const backoffDelay = computeJitterDelay(attempt, baseDelayMs, maxDelayMs);
         const chosenDelay = headerDelay !== null ? Math.min(maxDelayMs, headerDelay) : backoffDelay;
 
-        budgetTracker?.recordRetry();
         onRetry?.(response, attempt + 1, chosenDelay);
         await sleep(chosenDelay, signal);
         attempt++;
@@ -148,12 +131,7 @@ export async function retryRequest(
       const customRetry = shouldRetry ? shouldRetry(error, attempt) : isNetworkDrop || isTimeout;
 
       if (customRetry && attempt < retries) {
-        if (budgetTracker && !budgetTracker.canRetry()) {
-          throw new RetryBudgetExceededError();
-        }
-
         const chosenDelay = computeJitterDelay(attempt, baseDelayMs, maxDelayMs);
-        budgetTracker?.recordRetry();
         onRetry?.(error, attempt + 1, chosenDelay);
         await sleep(chosenDelay, signal);
         attempt++;
@@ -165,9 +143,6 @@ export async function retryRequest(
   }
 }
 
-/**
- * Drop-in replacement for standard native fetch.
- */
 export async function retryFetch(
   url: string | URL | Request,
   init?: RequestInit,
@@ -177,22 +152,22 @@ export async function retryFetch(
     init?.method ?? (url instanceof Request ? url.method : 'GET')
   ).toUpperCase();
 
-  const isSafeMethod = ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'].includes(requestMethod);
-  const targetUrl = url instanceof Request ? url.url : String(url);
+  const isSafeMethod = ['GET', 'HEAD', 'OPTIONS'].includes(requestMethod);
+  const isIdempotentMethod = ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'].includes(requestMethod);
 
   if (options.retrySafety === 'safe-methods-only' && !isSafeMethod) {
-    return retryRequest(
-      async (_, signal) => {
-        return fetch(url, { ...init, signal });
-      },
-      { ...options, retries: 0 }
-    );
+    return retryRequest(async (_, signal) => fetch(url, { ...init, signal }), {
+      ...options,
+      retries: 0,
+    });
   }
 
-  return retryRequest(
-    async (_, signal) => {
-      return fetch(url, { ...init, signal });
-    },
-    { ...options, provider: options.provider ?? targetUrl }
-  );
+  if (options.retrySafety === 'idempotent-methods-only' && !isIdempotentMethod) {
+    return retryRequest(async (_, signal) => fetch(url, { ...init, signal }), {
+      ...options,
+      retries: 0,
+    });
+  }
+
+  return retryRequest(async (_, signal) => fetch(url, { ...init, signal }), options);
 }

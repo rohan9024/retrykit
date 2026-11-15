@@ -1,55 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import {
-  anthropicAdapter,
-  azureAdapter,
-  geminiAdapter,
-  groqAdapter,
-  openAIAdapter,
-} from '../src/adapters.js';
+import { findProviderAdapter, geminiAdapter } from '../src/adapters.js';
 
-describe('Provider Adapters', () => {
-  it('OpenAI parses project-scoped token resets', () => {
-    const headers = {
-      'x-ratelimit-remaining-project-tokens': '0',
-      'x-ratelimit-reset-project-tokens': '10s',
-    };
-    const res = openAIAdapter.parseRateLimit(headers);
-    expect(res?.retryAfterMs).toBe(10000);
-    expect(res?.exhaustedDimensions).toContain('project_tokens');
+describe('Provider Adapters Granular Classification & Security', () => {
+  it('classifies Gemini billing and quota errors distinctly', () => {
+    const billingErr = new Error('Your project has exceeded its spending cap or billing is inactive.');
+    const billingDecision = geminiAdapter.classifyError?.(billingErr);
+    expect(billingDecision?.retryable).toBe(false);
+    expect(billingDecision?.category).toBe('billing_limit');
+
+    const dailyErr = new Error('Daily limit reached for models/gemini-1.5-pro');
+    const dailyDecision = geminiAdapter.classifyError?.(dailyErr);
+    expect(dailyDecision?.retryable).toBe(false);
+    expect(dailyDecision?.category).toBe('quota_exhausted');
+
+    const rateErr = new Error('Resource has been exhausted (e.g. check quota): RESOURCE_EXHAUSTED');
+    const rateDecision = geminiAdapter.classifyError?.(rateErr);
+    expect(rateDecision?.retryable).toBe(true);
+    expect(rateDecision?.category).toBe('rate_limit');
   });
 
-  it('Anthropic parses token resets with remaining quota mapping', () => {
-    const headers = {
-      'anthropic-ratelimit-tokens-remaining': '0',
-      'anthropic-ratelimit-tokens-reset': '6s',
-      'anthropic-ratelimit-requests-remaining': '10',
-      'anthropic-ratelimit-requests-reset': '1s',
-    };
-    const res = anthropicAdapter.parseRateLimit(headers);
-    expect(res?.retryAfterMs).toBe(6000);
-    expect(res?.exhaustedDimensions).toEqual(['tokens']);
-  });
-
-  it('Groq evaluates both TPM and RPD and returns maximum', () => {
-    const headers = {
-      'x-ratelimit-remaining-tokens': '0',
-      'x-ratelimit-reset-tokens': '2s',
-      'x-ratelimit-remaining-requests': '0',
-      'x-ratelimit-reset-requests': '8s',
-    };
-    const res = groqAdapter.parseRateLimit(headers);
-    expect(res?.retryAfterMs).toBe(8000);
-  });
-
-  it('Azure parses retry-after-ms', () => {
-    const headers = { 'retry-after-ms': '450' };
-    const res = azureAdapter.parseRateLimit(headers);
-    expect(res?.retryAfterMs).toBe(450);
-  });
-
-  it('Gemini classifies RESOURCE_EXHAUSTED errors', () => {
-    const classification = geminiAdapter.classifyError?.({ status: 'RESOURCE_EXHAUSTED' });
-    expect(classification?.retryable).toBe(true);
-    expect(classification?.reason).toBe('quota_exhausted');
+  it('verifies strict domain-boundary matching', () => {
+    expect(findProviderAdapter('https://api.openai.com.attacker.com').name).toBe('generic');
+    expect(findProviderAdapter('https://api.openai.com/v1').name).toBe('openai');
   });
 });

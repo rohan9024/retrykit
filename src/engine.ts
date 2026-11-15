@@ -1,4 +1,4 @@
-import { HeaderSource, QuotaBucket, RetryBudget } from './types.js';
+import { HeaderSource, QuotaBucket } from './types.js';
 
 export const DEFAULT_RETRYABLE_STATUS_CODES = [408, 429, 500, 502, 503, 504];
 
@@ -7,9 +7,7 @@ export class RateLimitExceededError extends Error {
   public readonly maxDelayMs: number;
 
   constructor(delayMs: number, maxDelayMs: number) {
-    super(
-      `Rate limit wait of ${delayMs}ms requested by server exceeds configured maximum of ${maxDelayMs}ms.`
-    );
+    super(`Rate limit wait of ${delayMs}ms requested by server exceeds configured maximum of ${maxDelayMs}ms.`);
     this.name = 'RateLimitExceededError';
     this.delayMs = delayMs;
     this.maxDelayMs = maxDelayMs;
@@ -20,42 +18,6 @@ export class DeadlineExceededError extends Error {
   constructor(elapsedMs: number, maxElapsedTimeMs: number) {
     super(`Operation exceeded total deadline: ${elapsedMs}ms > ${maxElapsedTimeMs}ms.`);
     this.name = 'DeadlineExceededError';
-  }
-}
-
-export class RetryBudgetExceededError extends Error {
-  constructor() {
-    super('Shared retry budget exhausted. Request failed fast.');
-    this.name = 'RetryBudgetExceededError';
-  }
-}
-
-/**
- * Sliding window retry budget tracker to prevent retry storms.
- */
-export class RetryBudgetTracker {
-  private timestamps: number[] = [];
-  private readonly maxExtraAttempts: number;
-  private readonly windowMs: number;
-
-  constructor(budget: RetryBudget) {
-    this.maxExtraAttempts = budget.maxExtraAttempts;
-    this.windowMs = budget.windowMs;
-  }
-
-  public canRetry(now: number = Date.now()): boolean {
-    this.prune(now);
-    return this.timestamps.length < this.maxExtraAttempts;
-  }
-
-  public recordRetry(now: number = Date.now()): void {
-    this.prune(now);
-    this.timestamps.push(now);
-  }
-
-  private prune(now: number): void {
-    const cutoff = now - this.windowMs;
-    this.timestamps = this.timestamps.filter((ts) => ts > cutoff);
   }
 }
 
@@ -73,9 +35,6 @@ export function computeJitterDelay(
   return Math.floor(ceiling * Math.random());
 }
 
-/**
- * Safely extracts a header value case-insensitively across Headers, records, or tuples.
- */
 export function getHeader(headers: HeaderSource, name: string): string | null {
   if (!headers) return null;
   const target = name.toLowerCase();
@@ -104,9 +63,6 @@ export function getHeader(headers: HeaderSource, name: string): string | null {
   return null;
 }
 
-/**
- * Strictly parses duration strings (e.g., "600ms", "10s", "2m", "1m30s").
- */
 export function parseDurationToMs(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -133,22 +89,20 @@ export function parseDurationToMs(value: string): number | null {
   return matched ? Math.max(0, Math.floor(totalMs)) : null;
 }
 
-/**
- * Deterministically parses a header value representing a timestamp or delay.
- */
 export function parseTimestampOrDelay(value: string, now: number = Date.now()): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
 
-  // Date format (RFC 3339, ISO 8601, RFC 1123)
+  // RFC 3339 / ISO 8601 Date
   if (trimmed.includes(':') || trimmed.includes('T') || trimmed.includes('-') || trimmed.includes(',')) {
     const parsed = Date.parse(trimmed);
     if (!Number.isNaN(parsed)) {
       return Math.max(0, parsed - now);
     }
+    return null;
   }
 
-  // Relative duration string with units ("15s", "600ms")
+  // Duration with units ("15s", "600ms")
   const duration = parseDurationToMs(trimmed);
   if (duration !== null) {
     return duration;
@@ -157,18 +111,11 @@ export function parseTimestampOrDelay(value: string, now: number = Date.now()): 
   // Pure numeric formats
   if (/^\d+(\.\d+)?$/.test(trimmed)) {
     const num = parseFloat(trimmed);
-    if (Number.isNaN(num)) return null;
+    if (Number.isNaN(num) || num < 0) return null;
 
-    // Epoch milliseconds (> 1e11)
-    if (num > 100000000000) {
-      return Math.max(0, Math.floor(num - now));
-    }
-    // Epoch seconds (> 1e9)
-    if (num > 1000000000) {
-      return Math.max(0, Math.floor(num * 1000 - now));
-    }
-    // Relative seconds
-    return Math.max(0, Math.floor(num * 1000));
+    if (num > 100000000000) return Math.max(0, Math.floor(num - now)); // Epoch ms
+    if (num > 1000000000) return Math.max(0, Math.floor(num * 1000 - now)); // Epoch sec
+    return Math.max(0, Math.floor(num * 1000)); // Relative sec
   }
 
   return null;
@@ -176,17 +123,43 @@ export function parseTimestampOrDelay(value: string, now: number = Date.now()): 
 
 /**
  * Calculates required wait across multi-dimensional quota buckets:
- * D_wait = max(D_tokens, D_requests) for all exhausted dimensions.
+ * When an exhausted quota lacks reset info, incorporates fallback conservative delay.
  */
-export function calculateRequiredWait(buckets: QuotaBucket[]): number {
-  const exhausted = buckets.filter((b) => b.exhausted && b.resetAfterMs !== undefined);
-  if (exhausted.length === 0) return 0;
-  return Math.max(0, ...exhausted.map((b) => b.resetAfterMs!));
+export function calculateRequiredWait(
+  buckets: QuotaBucket[],
+  fallbackDelayMs: number = 5000
+): { requiredWaitMs: number; hasUnknownReset: boolean } {
+  const exhausted = buckets.filter((b) => b.exhausted);
+  if (exhausted.length === 0) return { requiredWaitMs: 0, hasUnknownReset: false };
+
+  let maxKnownWait = 0;
+  let hasUnknownReset = false;
+
+  for (const b of exhausted) {
+    if (b.resetAfterMs !== undefined && b.resetAfterMs > 0) {
+      maxKnownWait = Math.max(maxKnownWait, b.resetAfterMs);
+    } else {
+      hasUnknownReset = true;
+    }
+  }
+
+  const requiredWaitMs = hasUnknownReset ? Math.max(maxKnownWait, fallbackDelayMs) : maxKnownWait;
+  return { requiredWaitMs, hasUnknownReset };
 }
 
 /**
- * Transient network error detection including Node/Undici socket and timeout errors.
+ * Safely cancels discarded response bodies without shadowing the original error.
  */
+export async function safelyCancelDiscardedBody(response: Response): Promise<void> {
+  if (response.body && !response.bodyUsed) {
+    try {
+      await response.body.cancel();
+    } catch {
+      // Intentionally swallowed so underlying HTTP error is never masked
+    }
+  }
+}
+
 export function isTransientNetworkError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
 
@@ -217,9 +190,6 @@ export function isTransientNetworkError(error: unknown): boolean {
   );
 }
 
-/**
- * Promisified sleep respecting AbortSignal cancellation.
- */
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {

@@ -1,12 +1,18 @@
+export { createRetryClient, RetryClient } from './client.js';
+export { createRetryBudget, TokenBucketRetryBudget, RetryBudgetExceededError } from './budget.js';
 export { retryFetch, retryRequest } from './fetch.js';
 export { retry } from './wrap.js';
-export { retryStream, StreamDuplicatePreventionError } from './stream.js';
+export { retryStream, StreamDuplicatePreventionError, StreamChunkTimeoutError } from './stream.js';
 export { CircuitBreaker, CircuitBreakerOpenError } from './circuit-breaker.js';
 export {
   ProviderCoordinator,
   getProviderCoordinator,
+  QueueTimeoutError,
+  QueueCapacityExceededError,
 } from './coordinator.js';
 export {
+  ProviderRegistry,
+  defaultRegistry,
   registerProvider,
   findProviderAdapter,
   openAIAdapter,
@@ -26,20 +32,23 @@ export {
   DEFAULT_RETRYABLE_STATUS_CODES,
   RateLimitExceededError,
   DeadlineExceededError,
-  RetryBudgetExceededError,
-  RetryBudgetTracker,
 } from './engine.js';
 export type {
   CoreRetryOptions,
+  RetryOptions,
   FetchRetryOptions,
   ResumableStreamOptions,
   CircuitBreakerOptions,
   CircuitState,
   HeaderSource,
   RetrySafetyPolicy,
-  RetryBudget,
+  FailureCategory,
+  RetryDecision,
   QuotaBucket,
   RateLimitResult,
   ProviderAdapter,
+  ProviderContext,
   CoordinatorOptions,
+  TokenBucketBudgetOptions,
+  RetryClientOptions,
 } from './types.js';
