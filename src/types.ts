@@ -48,6 +48,18 @@ export interface TokenBucketBudgetOptions {
   initialTokens?: number;
 }
 
+export interface RetryHookInfo {
+  attempt: number;
+  error: unknown;
+  delayMs: number;
+}
+
+export type OnRetryCallback = (
+  infoOrError: RetryHookInfo | any,
+  attempt?: number,
+  delayMs?: number
+) => void | Promise<void>;
+
 export interface CoreRetryOptions {
   /** Maximum retry attempts. Default: 3 */
   retries?: number;
@@ -60,7 +72,7 @@ export interface CoreRetryOptions {
   /** Custom condition to decide whether to retry */
   shouldRetry?: (error: unknown, attempt: number) => boolean;
   /** Optional callback fired before every retry sleep */
-  onRetry?: (error: unknown, attempt: number, delayMs: number) => void;
+  onRetry?: OnRetryCallback;
   /** AbortSignal for immediate cancellation */
   signal?: AbortSignal;
 }
