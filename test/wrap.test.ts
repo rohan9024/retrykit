@@ -25,4 +25,38 @@ describe('retry() SDK wrapper', () => {
     await retry(fn, { signal: controller.signal });
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it('invokes onRetry callback before retrying', async () => {
+    const onRetry = vi.fn();
+    let attempts = 0;
+    const fn = vi.fn().mockImplementation((attempt, signal) => {
+      attempts++;
+      if (attempts === 1) {
+        const err = new Error('Rate limit exceeded') as any;
+        err.status = 429;
+        return Promise.reject(err);
+      }
+      return Promise.resolve('success');
+    });
+    const result = await retry(fn, {
+      retries: 2,
+      minTimeout: 10,
+      maxTimeout: 20,
+      baseDelayMs: 10,
+      maxDelayMs: 20,
+      onRetry,
+      shouldRetry: () => true,
+    } as any);
+    expect(result).toBe('success');
+    expect(onRetry).toHaveBeenCalled();
+    expect(onRetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt: 1,
+        error: expect.any(Error),
+        delayMs: expect.any(Number),
+      }),
+      1,
+      expect.any(Number)
+    );
+  });
 });

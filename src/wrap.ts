@@ -122,7 +122,10 @@ export async function retry<T>(
         chosenDelay = computeJitterDelay(attempt, baseDelayMs, maxDelayMs);
       }
 
-      onRetry?.(error, attempt + 1, chosenDelay);
+      try {
+        await options?.onRetry?.({ attempt: attempt + 1, error, delayMs: chosenDelay }, attempt + 1, chosenDelay);
+      } catch {}
+
       await sleep(chosenDelay, signal);
       attempt++;
     }
