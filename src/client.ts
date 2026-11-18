@@ -27,19 +27,20 @@ export class RetryClient {
   public readonly budget?: TokenBucketRetryBudget;
   private readonly defaultOptions: FetchRetryOptions;
   private readonly providerAdapter: ProviderAdapter;
+  private readonly providerName: string;
 
   constructor(options: RetryClientOptions = {}) {
-    const providerName =
+    this.providerName =
       typeof options.provider === 'string'
         ? options.provider
-        : options.provider?.name ?? 'generic';
+        : options.provider?.name ?? options.retry?.providerHint ?? 'generic';
 
     this.providerAdapter =
       typeof options.provider === 'object' && options.provider !== null
         ? options.provider
-        : findProviderAdapter(providerName);
+        : findProviderAdapter(this.providerName);
 
-    const scopeKey = `${providerName}:${options.scope ?? 'default'}`;
+    const scopeKey = `${this.providerName}:${options.scope ?? 'default'}`;
     this.coordinator = getProviderCoordinator(scopeKey, options.concurrency ?? 10);
 
     if (options.circuitBreaker !== false && options.circuitBreaker !== undefined) {
@@ -128,7 +129,9 @@ export class RetryClient {
         if (custom && attempt < retries) {
           this.budget?.acquire(1);
           const delay = computeJitterDelay(attempt, baseDelayMs, maxDelayMs);
-          onRetry?.(err, attempt + 1, delay);
+          try {
+            onRetry?.({ attempt: attempt + 1, error: err, delayMs: delay, provider: this.providerName }, attempt + 1, delay);
+          } catch {}
           await sleep(delay, signal);
           attempt++;
           continue;
@@ -160,7 +163,9 @@ export class RetryClient {
         const backoffDelay = computeJitterDelay(attempt, baseDelayMs, maxDelayMs);
         const chosenDelay = headerDelay !== null ? Math.min(maxDelayMs, headerDelay) : backoffDelay;
 
-        onRetry?.(response, attempt + 1, chosenDelay);
+        try {
+          onRetry?.({ attempt: attempt + 1, error: response, delayMs: chosenDelay, provider: this.providerName }, attempt + 1, chosenDelay);
+        } catch {}
         await sleep(chosenDelay, signal);
         attempt++;
         continue;
@@ -171,7 +176,7 @@ export class RetryClient {
   }
 
   public retry<T>(fn: (attempt: number, signal?: AbortSignal) => Promise<T>, options?: FetchRetryOptions): Promise<T> {
-    return retry(fn, { ...this.defaultOptions, ...options });
+    return retry(fn, { provider: this.providerName, ...this.defaultOptions, ...options });
   }
 
   public stream<T, C = unknown>(options: ResumableStreamOptions<T, C>): AsyncGenerator<T, void, unknown> {
