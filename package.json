@@ -1,65 +1,60 @@
 {
   "name": "@rohan9024/retrykit",
-  "version": "0.4.0",
-  "description": "Provider-aware retries, rate-limit intelligence, and request resilience for Node.js and TypeScript AI applications.",
-  "main": "./dist/index.js",
-  "module": "./dist/index.mjs",
+  "version": "1.1.0",
+  "description": "The AI Resilience & Continuity Engine: Provider-aware rate-limits, key-pool rotation, context auto-healing, and budget guards.",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./register": {
+      "types": "./dist/register.d.ts",
+      "import": "./dist/register.js",
+      "require": "./dist/register.cjs"
     }
   },
   "files": [
-    "dist",
-    "README.md",
-    "llms.txt",
-    "llms-full.txt",
-    "AGENTS.md",
-    "agent-plugin",
-    "skills",
-    "LICENSE"
+    "dist"
   ],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/rohan9024/retrykit.git"
-  },
-  "homepage": "https://github.com/rohan9024/retrykit#readme",
-  "bugs": {
-    "url": "https://github.com/rohan9024/retrykit/issues"
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm run test"
   },
   "keywords": [
     "retry",
-    "resilience",
-    "rate-limit",
-    "llm",
     "openai",
     "anthropic",
-    "groq",
     "gemini",
-    "azure-openai",
-    "fetch",
+    "groq",
+    "deepseek",
+    "rate-limit",
+    "key-rotation",
+    "context-window",
     "circuit-breaker",
-    "streaming"
+    "ai-agents",
+    "resilience",
+    "llm"
   ],
-  "author": "rohan9024",
+  "author": "Rohan Wandre <rohanwandre24@gmail.com>",
   "license": "MIT",
-  "devDependencies": {
-    "@types/node": "^22.10.0",
-    "tsup": "^8.3.5",
-    "typescript": "^5.7.0",
-    "vitest": "^2.1.8"
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rohan9024/retrykit.git"
   },
-  "engines": {
-    "node": ">=20.0.0"
+  "bugs": {
+    "url": "https://github.com/rohan9024/retrykit/issues"
+  },
+  "homepage": "https://github.com/rohan9024/retrykit#readme",
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^1.6.1"
   }
 }

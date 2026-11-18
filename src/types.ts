@@ -1,108 +1,80 @@
-export type HeaderSource =
-  | Headers
-  | Record<string, string | string[] | undefined>
-  | [string, string][]
-  | undefined;
+export type JitterType = 'none' | 'full' | 'equal' | 'decorrelated';
+export type BackoffStrategy = 'exponential' | 'linear' | 'fixed';
+export type ProviderName =
+  | 'openai'
+  | 'anthropic'
+  | 'gemini'
+  | 'groq'
+  | 'deepseek'
+  | 'mistral'
+  | 'cohere'
+  | 'generic';
 
-export type RetrySafetyPolicy = 'safe-methods-only' | 'idempotent-methods-only' | 'all';
+export interface BackoffOptions {
+  strategy?: BackoffStrategy;
+  initialMs?: number;
+  maxMs?: number;
+  factor?: number;
+  jitter?: JitterType;
+}
 
-export type FailureCategory =
-  | 'rate_limit'
-  | 'provider_overload'
-  | 'concurrency_limit'
-  | 'network_error'
-  | 'quota_exhausted'
-  | 'billing_limit'
-  | 'authentication'
-  | 'invalid_request'
-  | 'unknown';
-
-export interface RetryDecision {
-  retryable: boolean;
-  category: FailureCategory;
-  reason: string;
+export interface RateLimitInfo {
+  isRateLimited: boolean;
   retryAfterMs?: number;
-  recommendedAction?: string;
+  isFatal?: boolean;
+  fatalReason?: string;
+  isContextOverflow?: boolean;
+  remainingRequests?: number;
+  remainingTokens?: number;
 }
 
-export interface QuotaBucket {
-  dimension: 'requests' | 'tokens' | 'input_tokens' | 'output_tokens' | 'project_tokens' | 'generic';
-  remaining?: number;
-  resetAfterMs?: number;
-  exhausted: boolean;
-}
-
-export interface RateLimitResult {
-  retryAfterMs: number;
-  exhaustedDimensions: string[];
-  buckets: QuotaBucket[];
-  hasUnknownReset: boolean;
-}
-
-export interface TokenBucketBudgetOptions {
-  /** Maximum retry tokens the bucket holds. Default: 20 */
-  capacity?: number;
-  /** Tokens replenished per second. Default: 5 */
-  refillPerSecond?: number;
-  /** Initial tokens upon creation. Default: capacity */
-  initialTokens?: number;
-}
-
-export interface RetryHookInfo {
+export interface RetryState {
   attempt: number;
+  maxRetries: number;
   error: unknown;
   delayMs: number;
+  totalTimeMs: number;
+  currentKey?: string;
 }
 
-export type OnRetryCallback = (
-  infoOrError: RetryHookInfo | any,
-  attempt?: number,
-  delayMs?: number
-) => void | Promise<void>;
+export interface BudgetOptions {
+  maxTokensPerRun?: number;
+  maxCostUsdPerRun?: number;
+  estimatedPromptTokens?: number;
+  estimatedCompletionTokens?: number;
+  model?: string;
+}
 
-export interface CoreRetryOptions {
-  /** Maximum retry attempts. Default: 3 */
-  retries?: number;
-  /** Base delay in ms for exponential backoff. Default: 500 */
-  baseDelayMs?: number;
-  /** Maximum backoff delay cap in ms. Default: 30000 */
-  maxDelayMs?: number;
-  /** Hard deadline for the entire operation in ms (includes queueing and backoffs) */
-  maxElapsedTimeMs?: number;
-  /** Custom condition to decide whether to retry */
-  shouldRetry?: (error: unknown, attempt: number) => boolean;
-  /** Optional callback fired before every retry sleep */
-  onRetry?: OnRetryCallback;
-  /** AbortSignal for immediate cancellation */
+export interface CompactionMessage {
+  role: string;
+  content: string;
+  [key: string]: unknown;
+}
+
+export interface CompactionOptions {
+  enabled?: boolean;
+  targetReductionRatio?: number; // 0.1 to 0.9 (default 0.3 = cut 30% of older context)
+  preserveSystemPrompt?: boolean;
+  preserveLastNMessages?: number;
+}
+
+export interface RetryOptions<T = unknown> {
+  maxRetries?: number;
+  timeoutMs?: number;
+  backoff?: BackoffOptions;
+  provider?: ProviderName;
   signal?: AbortSignal;
-}
-
-export type RetryOptions = CoreRetryOptions;
-
-export interface FetchRetryOptions extends CoreRetryOptions {
-  /** Per-attempt response acquisition timeout in ms */
-  timeoutMs?: number;
-  /** Action when provider rate limit wait exceeds maxDelayMs. Default: 'throw' */
-  exceedsMaxDelayBehavior?: 'throw' | 'defer' | 'clamp';
-  /** HTTP methods retry safety policy. Default: 'all' */
-  retrySafety?: RetrySafetyPolicy;
-  /** HTTP status codes that trigger a retry. Default: [408, 429, 500, 502, 503, 504] */
-  retryOnStatus?: number[];
-  /** Explicit provider hint (e.g. 'openai', 'anthropic') */
-  providerHint?: string;
-}
-
-export interface ResumableStreamOptions<T, C = unknown> extends CoreRetryOptions {
-  /** Stream factory receiving the checkpoint cursor of the last processed chunk */
-  createStream: (checkpoint: C | undefined, attempt: number, signal?: AbortSignal) => Promise<AsyncIterable<T>>;
-  /** Extract a resumption cursor from an acknowledged chunk */
-  getCheckpoint?: (chunk: T, previousCheckpoint: C | undefined) => C;
-  /** Initial checkpoint cursor */
-  initialCheckpoint?: C;
-  /** Explicit opt-in if stream restarts from beginning and consumer handles deduplication */
-  allowRestartWithoutCheckpoint?: boolean;
-  /** Per-chunk or acquisition timeout in ms */
-  timeoutMs?: number;
+  keys?: string[];
+  budget?: BudgetOptions;
+  compaction?: CompactionOptions;
+  deduplicate?: boolean; // SingleFlight deduplication
+  deduplicationKey?: string;
+  shouldRetry?: (error: unknown, attempt: number) => boolean | Promise<boolean>;
+  onRetry?: (state: RetryState) => void | Promise<void>;
+  onKeyRotate?: (oldKey: string, newKey: string, waitMs: number) => void;
+  onCompacted?: (originalLength: number, compactedLength: number) => void;
+  onSuccess?: (result: T, attempts: number, durationMs: number) => void;
+  onError?: (error: unknown, attempts: number) => void;
 }
 
 export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
@@ -110,43 +82,30 @@ export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 export interface CircuitBreakerOptions {
   failureThreshold?: number;
   resetTimeoutMs?: number;
-  halfOpenMaxCalls?: number;
-  shouldCountFailure?: (error: unknown) => boolean;
+  halfOpenMaxAttempts?: number;
   onStateChange?: (from: CircuitState, to: CircuitState) => void;
 }
 
-export interface ProviderContext {
-  url: string;
-  hostname: string;
-  headers?: HeaderSource;
-  providerHint?: string;
-}
-
-export interface ProviderAdapter {
+export interface FallbackStep<T> {
   name: string;
-  matches: (context: ProviderContext) => boolean;
-  parseRateLimit: (headers: HeaderSource, now?: number) => RateLimitResult | null;
-  classifyError?: (error: unknown, status?: number) => RetryDecision;
+  execute: () => Promise<T>;
+  options?: RetryOptions<T>;
 }
 
-export interface CoordinatorOptions {
-  /** Max concurrent network attempts in-flight. Default: 10 */
-  maxConcurrentAttempts?: number;
-  /** Max queue length before rejecting. Default: 500 */
-  maxQueueSize?: number;
-  /** Max time in ms a request can wait in queue. Default: 30000 */
-  maxQueueWaitMs?: number;
-  /** Provider name for quota isolation */
-  provider?: string;
+export interface FallbackReport<T> {
+  result: T;
+  stepName: string;
+  stepIndex: number;
+  attemptsUsed: number;
+  totalDurationMs: number;
+  errorsEncountered: Array<{ stepName: string; error: unknown }>;
 }
 
-export interface RetryClientOptions {
-  provider?: string | ProviderAdapter;
-  scope?: string;
-  concurrency?: number;
-  maxQueueSize?: number;
-  maxQueueWaitMs?: number;
-  circuitBreaker?: CircuitBreakerOptions | boolean;
-  budget?: TokenBucketBudgetOptions | boolean;
-  retry?: FetchRetryOptions;
+export interface StreamRetryOptions {
+  maxRetries?: number;
+  chunkTimeoutMs?: number;
+  backoff?: BackoffOptions;
+  signal?: AbortSignal;
+  onChunk?: (chunk: unknown) => void;
+  onStall?: (attempt: number) => void;
 }

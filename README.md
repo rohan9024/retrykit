@@ -1,19 +1,48 @@
 
-# @rohan9024/retrykit ⚡
+# RetryKit
 
-> The provider-aware network reliability layer for Node.js and TypeScript AI applications.
+**A zero-dependency resilience toolkit for AI API calls.**
 
-[![npm version](https://img.shields.io/npm/v/@rohan9024/retrykit.svg)](https://www.npmjs.com/package/@rohan9024/retrykit)
-[![CI](https://github.com/rohan9024/retrykit/actions/workflows/ci.yml/badge.svg)](https://github.com/rohan9024/retrykit/actions)
-[![License](https://img.shields.io/npm/l/@rohan9024/retrykit.svg)](https://github.com/rohan9024/retrykit)
+RetryKit makes AI API calls more reliable with intelligent retries, rate-limit-aware handling, API key rotation, fallback chains, budget protection, request deduplication, and streaming protection.
 
-Generic retry libraries (`p-retry`, `ky`) are blind to multi-dimensional LLM quotas, triggering retry amplification storms, deadlocks, and duplicate token generation.
-
-`retrykit` provides an intelligent provider adapter registry, in-process rate-limit coordination, checkpoint-driven stream resumption, and atomic circuit breaking with **zero runtime dependencies**.
+Built for applications using OpenAI, Anthropic, Gemini, Groq, DeepSeek, Mistral, and other LLM providers.
 
 ---
 
-## 📦 Installation
+## Why RetryKit?
+
+AI APIs can fail for many reasons:
+
+- Rate limits (`429`)
+- Temporary server errors (`5xx`)
+- Network failures
+- API key limits
+- Streaming responses getting stuck
+- Repeated duplicate requests
+- Unexpected token or cost consumption
+
+RetryKit helps handle these problems without requiring developers to build their own retry infrastructure.
+
+---
+
+## Features
+
+- 🔄 **Intelligent Retries** – Automatically retry failed requests.
+- ⚡ **Exponential Backoff** – Reduce unnecessary requests during failures.
+- 🎲 **Jitter Support** – Prevent synchronized retry storms.
+- 🔑 **API Key Rotation** – Rotate keys when rate limits are reached.
+- 🔀 **Fallback Chains** – Switch between providers or models when requests fail.
+- 📦 **Context Compaction** – Reduce conversation context when configured.
+- 💰 **Budget Guard** – Track token usage and estimated API costs.
+- 🔒 **Request Deduplication** – Prevent duplicate concurrent requests.
+- 🌊 **Streaming Watchdog** – Detect stalled streams and retry.
+- 🌐 **Fetch Integration** – Optionally apply retry logic to supported AI API requests.
+- 🛠️ **Fluent API** – Configure RetryKit using a builder.
+- 📦 **Zero Dependencies** – No runtime dependencies.
+
+---
+
+## Installation
 
 ```bash
 npm install @rohan9024/retrykit
@@ -21,214 +50,337 @@ npm install @rohan9024/retrykit
 
 ---
 
-## 🚀 Quickstart: Unified Reliability Client
-
-`createRetryClient` coordinates admission queues, provider cooldowns, circuit breaking, and retry budgets across your entire service.
-
-Concurrency slots are acquired strictly for network transit and **released immediately before backoff sleep**, preventing throttled requests from blocking concurrency capacity.
+## Quick Start
 
 ```typescript
-import { createRetryClient } from '@rohan9024/retrykit';
+import { retry } from "@rohan9024/retrykit";
 
-export const client = createRetryClient({
-  provider: 'openai', // 'anthropic' | 'groq' | 'azure-openai' | 'gemini'
-  concurrency: 10,
+const result = await retry(
+  async () => {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: "Hello!" }],
+      }),
+    });
 
-  circuitBreaker: {
-    failureThreshold: 5,
-    resetTimeoutMs: 30000,
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    return response.json();
   },
-
-  budget: {
-    capacity: 20,
-    refillPerSecond: 5,
-  },
-
-  retry: {
-    retries: 3,
-    timeoutMs: 15000,
-    maxElapsedTimeMs: 45000,
-    retrySafety: 'all',
-  },
-});
-
-// Drop-in fetch replacement with automatic rate-limit coordination
-const response = await client.fetch(
-  'https://api.openai.com/v1/chat/completions',
   {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o',
-      messages: [
-        {
-          role: 'user',
-          content: 'Explain Retrieval-Augmented Generation',
-        },
-      ],
-    }),
+    maxRetries: 3,
+    timeoutMs: 30_000,
   }
 );
 
-const data = await response.json();
+console.log(result);
 ```
 
 ---
 
-## 💻 Standalone Primitives
+## API Key Rotation
 
-### 1. Vercel AI SDK Integration
-
-Plug `retryFetch` directly into the Vercel AI SDK transport layer to handle rate limits and transient socket drops automatically.
+Automatically rotate between API keys when requests encounter rate limits.
 
 ```typescript
-import { createOpenAI } from '@ai-sdk/openai';
-import { retryFetch } from '@rohan9024/retrykit';
+import { retry } from "@rohan9024/retrykit";
 
-export const openai = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  fetch: (input, init) =>
-    retryFetch(input, init, {
-      retries: 3,
-      timeoutMs: 15000,
-      retrySafety: 'all',
-    }),
-});
+const result = await retry(
+  async (key) => {
+    return fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: "Hello!" }],
+      }),
+    });
+  },
+  {
+    keys: [
+      process.env.OPENAI_KEY_1!,
+      process.env.OPENAI_KEY_2!,
+      process.env.OPENAI_KEY_3!,
+    ],
+    maxRetries: 5,
+  }
+);
 ```
 
 ---
 
-### 2. Checkpoint-Driven Resilient Streaming (`retryStream`)
+## Fallback Chains
 
-Avoid duplicate tokens when an SSE connection drops mid-generation by tracking cursor acknowledgements.
+Define multiple execution strategies and automatically move to the next one when a previous strategy fails.
 
 ```typescript
-import { retryStream } from '@rohan9024/retrykit';
+import { fallbackChain } from "@rohan9024/retrykit";
 
-for await (const chunk of retryStream({
-  createStream: async (checkpoint, attempt, signal) =>
-    fetchLLMStream({ cursor: checkpoint, signal }),
+const result = await fallbackChain([
+  {
+    name: "OpenAI",
+    run: () => callOpenAI(),
+  },
+  {
+    name: "Anthropic",
+    run: () => callAnthropic(),
+  },
+  {
+    name: "Local LLM",
+    run: () => callLocalModel(),
+  },
+]);
 
-  getCheckpoint: (chunk) => chunk.id, // Checkpoint commits only after consumer processes the chunk
+console.log(result);
+```
 
-  retries: 3,
-  timeoutMs: 10000,
+---
+
+## Context Compaction
+
+Reduce large conversation contexts while preserving important messages and recent context.
+
+```typescript
+import { retry } from "@rohan9024/retrykit";
+
+const result = await retry(
+  async () => callLLM(messages),
+  {
+    maxRetries: 3,
+    compaction: {
+      enabled: true,
+    },
+  }
+);
+```
+
+---
+
+## Budget Guard
+
+Track token usage and estimated API costs to help prevent unexpected spending.
+
+```typescript
+import { retry } from "@rohan9024/retrykit";
+
+const result = await retry(
+  async () => callLLM(),
+  {
+    budget: {
+      maxTokens: 100_000,
+      maxCost: 2.00,
+    },
+  }
+);
+```
+
+---
+
+## Request Deduplication
+
+Prevent identical concurrent requests from executing multiple times.
+
+```typescript
+import { retry } from "@rohan9024/retrykit";
+
+const request = () =>
+  retry(
+    async () => callLLM(),
+    {
+      deduplicate: true,
+      deduplicationKey: "user-123-query",
+    }
+  );
+
+const [result1, result2] = await Promise.all([
+  request(),
+  request(),
+]);
+```
+
+---
+
+## Streaming Protection
+
+Detect stalled streams and automatically retry when streaming stops making progress.
+
+```typescript
+import { retryStream } from "@rohan9024/retrykit";
+
+async function* stream() {
+  // Your streaming implementation
+}
+
+for await (const chunk of retryStream(stream, {
+  maxRetries: 3,
+  stallTimeoutMs: 10_000,
 })) {
-  process.stdout.write(chunk.text);
+  console.log(chunk);
 }
 ```
 
-> **Safety Invariant:** If a stream drops mid-sentence without a cursor checkpoint, RetryKit throws `StreamDuplicatePreventionError` rather than blindly restarting and generating duplicated tokens.
-
 ---
 
-### 3. Replay-Safe Request Factories (`retryRequest`)
+## Global Fetch Integration
 
-For non-idempotent streams, audio uploads, or multipart form requests where the body cannot be re-read.
-
-```typescript
-import { retryRequest } from '@rohan9024/retrykit';
-
-const response = await retryRequest(
-  async (attempt, signal) =>
-    fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-      body: createFreshAudioFormData(), // Fresh stream created per attempt
-      signal,
-    }),
-  { retries: 3 }
-);
-```
-
----
-
-### 4. Shared Token-Bucket Retry Budget
-
-A cross-operation token bucket that caps total extra retry traffic across your entire service to prevent retry storms.
+Automatically apply retry handling to supported AI API requests.
 
 ```typescript
-import { createRetryBudget } from '@rohan9024/retrykit';
+import { patchGlobalFetch } from "@rohan9024/retrykit";
 
-const budget = createRetryBudget({
-  capacity: 25,
-  refillPerSecond: 5,
+patchGlobalFetch({
+  maxRetries: 3,
 });
-
-// Shared across multiple clients or fetch calls
-budget.acquire();
 ```
+
+RetryKit can target supported AI API endpoints without changing every individual request.
 
 ---
 
-### 5. Wrapping Official AI SDKs (`retry`)
+## Fluent API
 
-Wrap official OpenAI, Anthropic, or Gemini SDK calls.
-
-Disable nested SDK retries (`maxRetries: 0`) to prevent retry multiplication.
+Configure RetryKit using a builder-style API.
 
 ```typescript
-import OpenAI from 'openai';
-import { retry } from '@rohan9024/retrykit';
+import { RetryKit } from "@rohan9024/retrykit";
 
-const openai = new OpenAI({
-  maxRetries: 0,
-});
+const client = new RetryKit()
+  .maxRetries(3)
+  .timeout(30_000)
+  .exponentialBackoff()
+  .onRetry((error, attempt) => {
+    console.log(`Retry attempt: ${attempt}`, error);
+  });
 
-const completion = await retry((attempt, signal) =>
-  openai.chat.completions.create(
-    {
-      model: 'gpt-4o',
-      messages: [{ role: 'user', content: 'Hello!' }],
-    },
-    { signal }
-  )
-);
+const result = await client.execute(() => callLLM());
 ```
 
 ---
 
-## 🧠 Provider Compatibility Matrix
+## Supported Providers
 
-RetryKit uses strict domain-boundary matching and multi-dimensional quota tracking:
+RetryKit is designed to work with AI API requests from providers including:
 
-\[
-D_{\text{wait}} = \max(D_{\text{tokens}}, D_{\text{requests}})
-\]
-
-| Provider | Multi-Dimensional Quota & Error Handling |
+| Provider | Support |
 |---|---|
-| **OpenAI** | Evaluates requests, tokens, and project-scoped token resets. |
-| **Anthropic** | Correlates RFC 3339 timestamps with remaining quota dimensions. |
-| **Groq** | Evaluates TPM and RPD dimensions and respects the maximum token/request wait time. |
-| **Azure OpenAI** | Parses native `retry-after-ms` and standard RFC `Retry-After`. |
-| **Google Gemini** | Differentiates temporary rate limits, daily quota limits, and billing caps. |
+| OpenAI | ✅ |
+| Anthropic | ✅ |
+| Google Gemini | ✅ |
+| Groq | ✅ |
+| DeepSeek | ✅ |
+| Mistral | ✅ |
+| Cohere | ✅ |
+| Generic HTTP APIs | ✅ |
 
 ---
 
-## ⚙️ Options Reference
+## API Reference
 
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `retries` | `number` | `3` | Maximum retry attempts. |
-| `baseDelayMs` | `number` | `500` | Starting backoff delay in milliseconds. |
-| `maxDelayMs` | `number` | `30000` | Backoff ceiling cap in milliseconds. |
-| `maxElapsedTimeMs` | `number` | `undefined` | Hard deadline for the entire operation (queue + backoff + network). |
-| `timeoutMs` | `number` | `undefined` | Per-attempt response acquisition timeout in milliseconds. |
-| `retrySafety` | `'safe-methods-only' \| 'idempotent-methods-only' \| 'all'` | `'all'` | Controls automatic retries on non-idempotent methods. |
-| `exceedsMaxDelayBehavior` | `'throw' \| 'defer' \| 'clamp'` | `'throw'` | Action when server delay exceeds `maxDelayMs`. |
-| `retryOnStatus` | `number[]` | `[408, 429, 500, 502, 503, 504]` | HTTP status codes that trigger a retry. |
-| `shouldRetry` | `(err, attempt) => boolean` | `undefined` | Custom predicate for retry decisions. |
-| `onRetry` | `(err, attempt, delay) => void` | `undefined` | Callback fired before each retry sleep. |
-| `signal` | `AbortSignal` | `undefined` | Cooperative cancellation controller. |
+### `retry(operation, options)`
+
+Execute an operation with retry and resilience logic.
+
+| Option | Description |
+|---|---|
+| `maxRetries` | Maximum retry attempts |
+| `timeoutMs` | Request timeout |
+| `provider` | AI provider configuration |
+| `backoff` | Retry backoff configuration |
+| `signal` | AbortSignal |
+| `keys` | API keys for rotation |
+| `budget` | Token and cost budget configuration |
+| `compaction` | Context compaction configuration |
+| `deduplicate` | Enable request deduplication |
+| `deduplicationKey` | Unique key for deduplication |
+| `shouldRetry` | Custom retry condition |
+| `onRetry` | Callback when retrying |
+| `onKeyRotate` | Callback when rotating keys |
+| `onCompacted` | Callback when context is compacted |
+| `onSuccess` | Callback after success |
+| `onError` | Callback after failure |
+
+### `fallbackChain(steps)`
+
+Execute multiple strategies sequentially until one succeeds.
+
+### `retryStream(generator, options)`
+
+Retry async generators when streams stall.
+
+### `patchGlobalFetch(options)`
+
+Apply retry behavior to supported AI API requests through global fetch.
+
+### `RetryKit`
+
+Fluent builder for configuring retry operations.
 
 ---
 
-## 📄 License
+## Development
 
-MIT © [rohan9024](https://github.com/rohan9024)
+Clone the repository:
+
+```bash
+git clone https://github.com/rohan9024/retrykit.git
+cd retrykit
+```
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Run tests:
+
+```bash
+npm test
+```
+
+Build:
+
+```bash
+npm run build
+```
+
+Type-check:
+
+```bash
+npm run typecheck
+```
+
+---
+
+## Roadmap
+
+- More provider-specific resilience strategies
+- Better observability and retry metrics
+- Additional streaming safeguards
+- More advanced fallback policies
+- Improved configuration ergonomics
+
+---
+
+## Contributing
+
+Contributions, bug reports, feature requests, and feedback are welcome.
+
+Feel free to open an issue or submit a pull request.
+
+---
+
+## License
+
+MIT License.
