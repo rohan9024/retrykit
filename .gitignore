@@ -40,3 +40,5 @@ test-results/
 tmp/
 temp/
 src.zip
+*.tgz
+pack-smoke/
