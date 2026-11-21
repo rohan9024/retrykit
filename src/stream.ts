@@ -18,8 +18,7 @@ export class StreamStallError extends Error {
 }
 
 function getChunkCursor(chunk: any, options: any): any {
-  if (options?.getCursor) return options.getCursor(chunk);
-  if (typeof options?.checkpoint === 'function') return options.checkpoint(chunk);
+  if (options?.getCheckpoint) return options.getCheckpoint(chunk);
   if (chunk && typeof chunk === 'object') {
     for (const key of ['cursor', 'id', 'offset', 'index', 'checkpoint', 'seq', 'sequence', 'key']) {
       if (chunk[key] !== undefined) return chunk[key];
@@ -217,11 +216,7 @@ export async function* retryStream<T>(
   const chunkTimeoutMs = options.chunkTimeoutMs ?? 10000;
 
   const isCheckpointed =
-    Boolean(options.checkpoint) ||
-    Boolean(options.getCursor) ||
-    typeof options.resume === 'function' ||
-    typeof options.resumeFrom === 'function' ||
-    Boolean(options.initialCursor);
+    typeof options.getCheckpoint === 'function';
 
   let attempt = 0;
   let totalYielded = 0;
@@ -275,8 +270,6 @@ export async function* retryStream<T>(
             emittedCursors.add(cursor);
             lastCheckpoint = cursor;
             options.onCheckpoint?.(cursor);
-          } else if (isCheckpointed) {
-            lastCheckpoint = totalYielded;
           }
 
           totalYielded++;
@@ -288,9 +281,7 @@ export async function* retryStream<T>(
         }
       }
     } catch (err) {
-      const isUncheckpointed =
-        !isCheckpointed &&
-        (options.checkpoint === false || (!options.checkpoint && !options.getCursor && emittedCursors.size === 0));
+      const isUncheckpointed = !isCheckpointed;
 
       // Fast-fail if uncheckpointed stream drops mid-sentence after emitting chunks
       if (totalYielded > 0 && isUncheckpointed) {

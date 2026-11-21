@@ -21,7 +21,7 @@ export class FatalError extends Error {
 }
 
 export async function retry<T>(
-  fn: (attempt: number, context: { key?: string; compactedMessages?: unknown[] }) => Promise<T>,
+  fn: (attempt: number, context: { key?: string; compactedMessages?: unknown[]; signal?: AbortSignal }) => Promise<T>,
   options: RetryOptions<T> = {}
 ): Promise<T> {
   const runner = async () => {
@@ -44,17 +44,38 @@ export async function retry<T>(
       budgetTracker?.recordAttempt();
 
       const currentKey = keyPool ? keyPool.getActiveKey() : undefined;
+      const attemptController = new AbortController();
+      const deadlineMs = options.totalDeadlineMs;
+      const elapsed = Date.now() - startTime;
+      const remainingDeadline = deadlineMs === undefined ? undefined : deadlineMs - elapsed;
+      if (remainingDeadline !== undefined && remainingDeadline <= 0) {
+        throw new Error(`Operation exceeded total deadline of ${deadlineMs}ms.`);
+      }
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      let deadlineId: ReturnType<typeof setTimeout> | undefined;
+      const abort = (reason: Error) => {
+        if (!attemptController.signal.aborted) attemptController.abort(reason);
+      };
+      if (options.attemptTimeoutMs && options.attemptTimeoutMs > 0) {
+        timeoutId = setTimeout(() => abort(new Error(`Attempt timed out after ${options.attemptTimeoutMs}ms`)), options.attemptTimeoutMs);
+      }
+      if (remainingDeadline !== undefined) {
+        deadlineId = setTimeout(() => abort(new Error(`Operation exceeded total deadline of ${deadlineMs}ms`)), remainingDeadline);
+      }
+      const linked = new AbortController();
+      const forwardAbort = (event: Event) => linked.abort((event.target as AbortSignal).reason);
+      const signals = [options.signal, attemptController.signal].filter((s): s is AbortSignal => Boolean(s));
+      for (const signal of signals) {
+        if (signal.aborted) linked.abort(signal.reason);
+        else signal.addEventListener('abort', forwardAbort, { once: true });
+      }
 
       try {
-        let taskPromise = fn(attempt, { key: currentKey, compactedMessages: compactedPayload });
-
-        if (timeoutMs && timeoutMs > 0) {
-          let timer: ReturnType<typeof setTimeout> | undefined;
-          const timeoutPromise = new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new Error(`Operation timed out after ${timeoutMs}ms`)), timeoutMs);
-          });
-          taskPromise = Promise.race([taskPromise, timeoutPromise]).finally(() => clearTimeout(timer));
+        const effectiveTimeout = options.attemptTimeoutMs ?? timeoutMs;
+        if (effectiveTimeout && effectiveTimeout > 0 && !timeoutId) {
+          timeoutId = setTimeout(() => abort(new Error(`Attempt timed out after ${effectiveTimeout}ms`)), effectiveTimeout);
         }
+        const taskPromise = fn(attempt, { key: currentKey, compactedMessages: compactedPayload, signal: linked.signal });
 
         const result = await taskPromise;
         if (currentKey && keyPool) keyPool.markHealthy(currentKey);
@@ -121,6 +142,10 @@ export async function retry<T>(
             );
           }
         });
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+        if (deadlineId) clearTimeout(deadlineId);
+        for (const signal of signals) signal.removeEventListener('abort', forwardAbort);
       }
     }
   };

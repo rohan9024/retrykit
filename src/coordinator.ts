@@ -88,7 +88,7 @@ export class ProviderCoordinator {
     return null;
   }
 
-  public async acquireSlot(_provider?: string): Promise<void> {
+  public async acquireSlot(_provider?: string | AbortSignal): Promise<void> {
     // 1. If at capacity, wait in FIFO queue
     if (this.inFlight >= this.capacity) {
       await new Promise<void>((resolve) => {

@@ -10,6 +10,10 @@ const FATAL_SUBSTRINGS = [
   'model_not_found',
   'insufficient_quota',
   'credit_balance_too_low',
+  'credit_balance_exhausted',
+  'organization_spend_limit_exceeded',
+  'project_spend_limit_exceeded',
+  'enforced_spend_limit_reached',
 ];
 
 const CONTEXT_OVERFLOW_SUBSTRINGS = [
@@ -61,17 +65,12 @@ function parseTimeString(raw: string): number | null {
   const trimmed = raw.trim();
   const num = Number(trimmed);
   if (!Number.isNaN(num)) return num * 1000;
-
-  let totalMs = 0;
-  const mMatch = trimmed.match(/(\d+(?:\.\d+)?)m(?:in)?/);
-  const sMatch = trimmed.match(/(\d+(?:\.\d+)?)s/);
-  const msMatch = trimmed.match(/(\d+(?:\.\d+)?)ms/);
-
-  if (msMatch) totalMs += parseFloat(msMatch[1]);
-  if (sMatch) totalMs += parseFloat(sMatch[1]) * 1000;
-  if (mMatch) totalMs += parseFloat(mMatch[1]) * 60000;
-
-  return totalMs > 0 ? totalMs : null;
+  const matches = [...trimmed.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h)/g)];
+  if (!matches.length || matches.map((match) => match[0]).join('') !== trimmed) return null;
+  return matches.reduce((total, match) => {
+    const amount = Number(match[1]);
+    return total + amount * ({ ms: 1, s: 1000, m: 60000, h: 3600000 } as Record<string, number>)[match[2]];
+  }, 0);
 }
 
 function parseHttpRetryAfter(value: string): number | null {
@@ -119,7 +118,7 @@ export function extractRateLimitInfo(error: unknown, fallbackProvider: ProviderN
   const headers = normalizeHeaders(rawHeaders);
 
   let retryAfterMs: number | undefined;
-  let isRateLimited = statusCode === 429;
+  let isRateLimited = statusCode === 429 || statusCode === 529;
 
   // RFC Standard
   if (headers['retry-after']) {
@@ -159,6 +158,20 @@ export function extractRateLimitInfo(error: unknown, fallbackProvider: ProviderN
     if (parsed) {
       retryAfterMs = parsed;
       isRateLimited = true;
+    }
+  }
+
+  for (const name of [
+    'anthropic-ratelimit-requests-reset',
+    'anthropic-ratelimit-tokens-reset',
+    'anthropic-ratelimit-input-tokens-reset',
+  ]) {
+    if (headers[name]) {
+      const parsed = Date.parse(headers[name]);
+      if (!Number.isNaN(parsed)) {
+        retryAfterMs = Math.max(retryAfterMs || 0, Math.max(0, parsed - Date.now()));
+        isRateLimited = true;
+      }
     }
   }
 

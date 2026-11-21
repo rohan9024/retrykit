@@ -101,7 +101,9 @@ export class CircuitBreaker {
     this.failureCount++;
     this.lastFailureTime = Date.now();
     this.halfOpenCallsInFlight = 0;
-    this.transitionTo('OPEN');
+    if (this.state === 'HALF_OPEN' || this.failureCount >= this.failureThreshold) {
+      this.transitionTo('OPEN');
+    }
   }
 
   private transitionTo(nextState: CircuitState): void {

@@ -1,47 +1,28 @@
+# RetryKit complete context
 
-# @rohan9024/retrykit API Reference (v0.4.0)
+> `@rohan9024/retrykit` is a zero-runtime-dependency TypeScript reliability layer for AI applications.
 
-## Exports
+## Installation
 
-### 1. `createRetryClient(options?: RetryClientOptions): RetryClient`
+```bash
+npm i @rohan9024/retrykit
+npx skills add rohan9024/retrykit --skill retrykit
+```
 
-Creates a unified reliability client with provider-aware request handling.
+The first command installs runtime code. The second installs coding-agent instructions.
 
-**Methods:**
+## Core API
 
-- `client.fetch(url, init?, options?): Promise<Response>`
-- `client.retry(fn, options?): Promise<T>`
-- `client.stream(options): AsyncGenerator<T>`
+Use `retry(fn, options)` for promises, `retryFetch()` for HTTP, `CircuitBreaker` for outages, `ProviderCoordinator` for bounded concurrency, `fallbackChain` for explicit fallback, and `retryStream` for streaming. A stream may resume only with explicit `getCheckpoint`; otherwise a post-emission failure is rejected to prevent duplicate output.
 
-### 2. `createRetryBudget(options?: TokenBucketBudgetOptions): TokenBucketRetryBudget`
+## Auto integration
 
-Creates a token-bucket retry budget to control additional retry traffic.
+`wrapAI(client, options?)` recursively proxies nested resources including `chat.completions.create` and `messages.create`. It can select keys from `OPENAI_API_KEYS`, numbered `OPENAI_API_KEY_1` variables, `ANTHROPIC_API_KEYS`, and `GEMINI_API_KEYS`. When RetryKit owns retries, nested SDK `maxRetries` values are normalized to zero for calls.
 
-**Methods:**
+## Middleware and MCP
 
-- `budget.tryAcquire(cost?: number): boolean`
-- `budget.acquire(cost?: number): void`
+`retryMiddleware()` implements structural `transformParams`, `wrapGenerate`, and `wrapStream` without importing the Vercel AI SDK. `withMcpRetry()` retries exact safe MCP methods or explicitly allowlisted tool names. `tools/call` is not safe by default. MCP results with `isError: true` are retried only for idempotent operations.
 
-### 3. `retryFetch(url, init?, options?): Promise<Response>`
+## Safety
 
-A drop-in replacement for standard `fetch` with provider rate-limit extraction and retry handling.
-
-### 4. `retryRequest(requestFactory, options?): Promise<Response>`
-
-Re-executes `requestFactory(attempt, signal)` with a fresh request on every retry attempt.
-
-### 5. `retryStream(options: ResumableStreamOptions): AsyncGenerator<T>`
-
-Provides checkpoint cursor resumption for Server-Sent Events (SSE) streams.
-
-### 6. `CircuitBreaker`
-
-Provides circuit-breaking functionality with atomic probe reservation.
-
-**Methods:**
-
-- `execute(fn: () => Promise<T>): Promise<T>`
-
-**Key Features:**
-
-- Atomic probe reservation in `HALF_OPEN` state.
+Never replay unsafe mutations without application-level idempotency. Do not log credentials. Do not stack independent retry loops. Local coordinator and key-pool state is process-local. Estimated pricing is not exact billing.

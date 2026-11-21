@@ -1,6 +1,6 @@
 import { HeaderSource, QuotaBucket } from './types.js';
 
-export const DEFAULT_RETRYABLE_STATUS_CODES = [408, 429, 500, 502, 503, 504];
+export const DEFAULT_RETRYABLE_STATUS_CODES = [408, 429, 500, 502, 503, 504, 529];
 
 export class RateLimitExceededError extends Error {
   public readonly delayMs: number;

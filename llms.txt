@@ -1,34 +1,10 @@
+# RetryKit
 
-# @rohan9024/retrykit
+> Zero-dependency reliability and traffic control for AI applications.
 
-> The provider-aware network reliability layer for Node.js and TypeScript AI applications.
+## Documentation map
 
-## Quickstart
-
-```typescript
-import { createRetryClient } from '@rohan9024/retrykit';
-
-const client = createRetryClient({
-  provider: 'openai',
-  concurrency: 10,
-  retry: {
-    retries: 3,
-    timeoutMs: 15000,
-  },
-});
-
-const response = await client.fetch(
-  'https://api.openai.com/v1/chat/completions',
-  {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o',
-      messages: [{ role: 'user', content: 'Hello' }],
-    }),
-  }
-);
-```
+- [README](README.md): installation and API overview
+- [AI coding agents](docs/AI_CODING_AGENTS.md): package versus skill installation
+- [Skill](skills/retrykit/SKILL.md): safe integration workflow
+- [Full API context](llms-full.txt): modules and reliability invariants

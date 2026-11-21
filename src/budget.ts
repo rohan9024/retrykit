@@ -127,14 +127,27 @@ export class RetryBudget {
   }
 }
 
+export class RetryBudgetExceededError extends Error {
+  constructor(message = 'Shared retry budget exhausted. Request fast-failed.') { super(message); this.name = 'RetryBudgetExceededError'; }
+}
+
+export class TokenBucketRetryBudget {
+  private readonly delegate: RetryBudget;
+  constructor(options: RetryBudgetConfig = {}) { this.delegate = new RetryBudget(options); }
+  public tryAcquire(count = 1): boolean { return this.delegate.tryAcquire(count); }
+  public getAvailableTokens(): number { return this.delegate.getAvailableTokens(); }
+  public reset(): void { this.delegate.reset(); }
+  public acquire(count = 1): void {
+    if (!this.tryAcquire(count)) throw new RetryBudgetExceededError();
+  }
+}
+
 /**
  * Factory for creating RetryBudget instances
  */
 export function createRetryBudget(
-  options?: RetryBudgetConfig | RetryBudget
-): RetryBudget {
-  if (options instanceof RetryBudget) {
-    return options;
-  }
-  return new RetryBudget(options);
+  options?: RetryBudgetConfig | RetryBudget | TokenBucketRetryBudget
+): TokenBucketRetryBudget {
+  if (options instanceof TokenBucketRetryBudget) return options;
+  return new TokenBucketRetryBudget(options instanceof RetryBudget ? {} : options);
 }
