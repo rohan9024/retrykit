@@ -1,0 +1,34 @@
+name: RetryKit Doctor
+description: Audit a repository for AI SDK retry hazards using RetryKit Doctor.
+inputs:
+  fail-on-error:
+    description: Fail when Doctor reports an error finding.
+    default: 'true'
+  sarif-file:
+    description: Output path for the SARIF report.
+    default: retrykit-doctor.sarif
+  working-directory:
+    description: Repository directory to audit.
+    default: '.'
+runs:
+  using: composite
+  steps:
+    - name: Run RetryKit Doctor
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
+        SARIF_FILE: ${{ inputs.sarif-file }}
+      run: |
+        set -euo pipefail
+        npx -y @rohan9024/retrykit@latest doctor --sarif > "$SARIF_FILE"
+        report="$(npx -y @rohan9024/retrykit@latest doctor --json)"
+        printf '%s\n' "$report"
+        REPORT="$report" node - <<'NODE'
+        const report = JSON.parse(process.env.REPORT);
+        const errors = (report.findings || []).filter((finding) => finding.severity === 'error');
+        if (process.env.FAIL_ON_ERROR === 'true' && errors.length) {
+          console.error(`RetryKit Doctor found ${errors.length} error finding(s).`);
+          process.exit(1);
+        }
+        NODE

@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.1.1 - 2026-11-25
+## 2.1.2 - 2026-11-25
 
 - Preserve synchronous Anthropic `messages.stream()` objects while injecting request safety options.
 - Add atomic Upstash `increment()` / `consumeBudget()` support through REST pipelines.
@@ -25,5 +25,6 @@
 - Added CJS/ESM subpath exports and CLI packaging.
 - Added checkpoint-safe stream recovery and linked retry cancellation.
 - Added agent skill, Context7 metadata, AI-agent documentation, and OIDC publishing workflow.
+
 - Added structural auto, validation, MCP, and AI SDK integration surfaces.
 

@@ -5,7 +5,7 @@ license: MIT
 compatibility: Node 22+, Bun, Deno, Cloudflare Workers, Vercel Edge, and browsers for edge-safe core modules.
 ---
 
-# RetryKit v2.1.1
+# RetryKit v2.1.2
 
 ## Workflow
 

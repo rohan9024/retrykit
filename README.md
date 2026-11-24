@@ -1,4 +1,4 @@
-# @rohan9024/retrykit v2.1.1
+# @rohan9024/retrykit v2.1.2
 
 The reliability and traffic-control engine for AI applications: provider-aware retries, rate-limit coordination, cancellation, key rotation, circuit breaking, and safe stream recovery—with zero runtime dependencies.
 
@@ -72,6 +72,21 @@ npm run build
 Use `npx @rohan9024/retrykit doctor --json` to audit SDK retry settings, `npx @rohan9024/retrykit eval` to run deterministic Fault Lab scenarios, `npx @rohan9024/retrykit init --dry-run` to preview setup, and `npx @rohan9024/retrykit mcp` for the stdio MCP server.
 
 Migrating from `p-retry`: use `retry()` for promise operations, `createRetryFetch()` for HTTP, and the provider-aware policy when rate-limit headers, billing classification, stream checkpoints, or replay safety matter. Keep `p-retry` for generic non-AI work that does not need these guarantees.
+
+## CI / PR Audit Action
+
+```yaml
+- uses: rohan9024/retrykit@v2
+  with:
+    fail-on-error: 'true'
+    sarif-file: retrykit-doctor.sarif
+```
+
+The action writes a SARIF report and prints JSON findings. It fails only for error-severity findings when `fail-on-error` is enabled.
+
+## Fault Lab
+
+Try the static Fault Lab at https://rohan9024.github.io/retrykit/ for deterministic demonstrations of retry storms, stream interruptions, and tool-call safety.
 
 ## Reproducible benchmark simulation
 

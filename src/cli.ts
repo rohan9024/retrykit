@@ -33,7 +33,7 @@ function scanWorkspace(root: string): Finding[] {
 function jsonRpc(id: unknown, result: unknown) { return JSON.stringify({ jsonrpc: '2.0', id, result }); }
 
 function mcpResponse(request: any, root: string): string {
-  if (request.method === 'initialize') return jsonRpc(request.id, { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'retrykit', version: '2.1.1' } });
+  if (request.method === 'initialize') return jsonRpc(request.id, { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'retrykit', version: '2.1.2' } });
   if (request.method === 'tools/list') return jsonRpc(request.id, { tools: [
     { name: 'audit_ai_resilience', description: 'Scan source files for common retry hazards.', inputSchema: { type: 'object', properties: {} } },
     { name: 'get_retrykit_setup', description: 'Return verified RetryKit setup instructions.', inputSchema: { type: 'object', properties: {} } },
@@ -66,7 +66,7 @@ function main(): void {
   const root = process.cwd();
   if (command === 'doctor') {
     const findings = scanWorkspace(root);
-    if (process.argv.includes('--sarif')) { console.log(JSON.stringify({ $schema: 'https://json.schemastore.org/sarif-2.1.0.json', version: '2.1.0', runs: [{ tool: { driver: { name: 'retrykit-doctor', version: '2.1.1' } }, results: findings.map((f) => ({ ruleId: f.ruleId, level: f.severity, message: { text: f.message }, locations: [{ physicalLocation: { artifactLocation: { uri: f.file }, region: { startLine: f.line } } }] })) }] }, null, 2)); return; }
+    if (process.argv.includes('--sarif')) { console.log(JSON.stringify({ $schema: 'https://json.schemastore.org/sarif-2.1.0.json', version: '2.1.0', runs: [{ tool: { driver: { name: 'retrykit-doctor', version: '2.1.2' } }, results: findings.map((f) => ({ ruleId: f.ruleId, level: f.severity, message: { text: f.message }, locations: [{ physicalLocation: { artifactLocation: { uri: f.file }, region: { startLine: f.line } } }] })) }] }, null, 2)); return; }
     console.log(JSON.stringify({ command, findings }, null, 2)); return;
   }
   if (command === 'eval') { console.log(JSON.stringify({ command, passed: true, scenarios: ['429', '529', '503', 'insufficient_quota', 'network-reset'] }, null, 2)); return; }

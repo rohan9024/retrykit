@@ -1,6 +1,7 @@
 {
   "name": "@rohan9024/retrykit",
-  "version": "2.1.1",
+  "version": "2.1.2",
+  "mcpName": "io.github.rohan9024/retrykit",
   "description": "Zero-dependency TypeScript reliability layer for LLM retries, AI API rate limits, replay-safe HTTP, streaming recovery, circuit breakers, and MCP.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -140,7 +141,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/rohan9024/retrykit.git"
+    "url": "git+https://github.com/rohan9024/retrykit.git"
   },
   "bugs": {
     "url": "https://github.com/rohan9024/retrykit/issues"

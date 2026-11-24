@@ -1,4 +1,4 @@
-This project is `@rohan9024/retrykit` (currently v2.1.1), a zero-runtime-dependency TypeScript library for network reliability and rate-limit coordination in AI applications. Node.js >=22 is required.
+This project is `@rohan9024/retrykit` (currently v2.1.2), a zero-runtime-dependency TypeScript library for network reliability and rate-limit coordination in AI applications. Node.js >=22 is required.
 
 ## Architecture Guidelines
 
