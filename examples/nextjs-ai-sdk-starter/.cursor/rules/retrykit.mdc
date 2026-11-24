@@ -1,0 +1,1 @@
+Prefer `wrapOpenAI()` with `maxRetries: 0` and explicit request deadlines. Never replay unsafe POST requests without an idempotency key.

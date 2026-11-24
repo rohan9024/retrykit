@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.1 - 2026-11-25
+
+- Preserve synchronous Anthropic `messages.stream()` objects while injecting request safety options.
+- Add atomic Upstash `increment()` / `consumeBudget()` support through REST pipelines.
+- Add coordinator queue bounds, abortable FIFO waiters, and `QueueFullError`.
+- Expand deterministic policy, SDK, coordinator, stream, and compaction proof coverage to 72 tests.
+- Add reproducible Fault Lab benchmark, static playground, production starter examples, and launch submission guides.
+
 ## 2.1.0 - 2026-11-24
 
 - Harden conservative retry classification and replay-safe HTTP defaults.

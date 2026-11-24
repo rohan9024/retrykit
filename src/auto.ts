@@ -48,7 +48,7 @@ function makeCallArgs(args: any[], keyState: KeyState | undefined, options: Auto
     const headers = { ...(requestOptions.headers ?? {}) };
     if (headers[headerName] === undefined && headers[headerName.toLowerCase()] === undefined) headers[headerName] = headerValue;
     requestOptions.headers = headers;
-    if (Number(requestOptions.maxRetries) > 0) requestOptions.maxRetries = 0;
+    requestOptions.maxRetries = 0;
     next[1] = requestOptions;
     if (options.keyField && next[0] && typeof next[0] === 'object' && next[0][options.keyField] === undefined) {
       next[0] = { ...next[0], [options.keyField]: key };
@@ -67,6 +67,12 @@ function proxyResource(value: any, options: AutoOptions, keyState?: KeyState, se
       if (typeof child === 'function') {
         const allowed = !options.allowedMethods || options.allowedMethods.includes(childPath.join('.'));
         if (!allowed) return child.bind(target);
+        // Anthropic's messages.stream() returns a synchronous MessageStream object.
+        // Preserve its event and async-iterator surface; retrying stream chunks belongs
+        // to retryStream(), not to an async Promise wrapper around stream creation.
+        if (options.provider === 'anthropic' && childPath.at(-1) === 'stream') {
+          return (...args: any[]) => child.apply(target, makeCallArgs(args, keyState, options));
+        }
         return (...args: any[]) => {
           const { provider: _provider, ...retryOptions } = options;
           return retry(() => child.apply(target, makeCallArgs(args, keyState, options)), { ...retryOptions, maxRetries: options.maxRetries ?? 3 });

@@ -1,4 +1,4 @@
-# @rohan9024/retrykit v2.1.0
+# @rohan9024/retrykit v2.1.1
 
 The reliability and traffic-control engine for AI applications: provider-aware retries, rate-limit coordination, cancellation, key rotation, circuit breaking, and safe stream recovery—with zero runtime dependencies.
 
@@ -66,5 +66,23 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+## CLI and migration
+
+Use `npx @rohan9024/retrykit doctor --json` to audit SDK retry settings, `npx @rohan9024/retrykit eval` to run deterministic Fault Lab scenarios, `npx @rohan9024/retrykit init --dry-run` to preview setup, and `npx @rohan9024/retrykit mcp` for the stdio MCP server.
+
+Migrating from `p-retry`: use `retry()` for promise operations, `createRetryFetch()` for HTTP, and the provider-aware policy when rate-limit headers, billing classification, stream checkpoints, or replay safety matter. Keep `p-retry` for generic non-AI work that does not need these guarantees.
+
+## Reproducible benchmark simulation
+
+Run `node benchmarks/storm-benchmark.mjs` for the deterministic 50-caller Fault Lab simulation. The current measured policy table is:
+
+| Strategy | Requests Fired | Wasted Quota Retries | Stream Duplicates | Compaction Crashes |
+| --- | ---: | ---: | ---: | ---: |
+| Naive SDK + generic 3x loop | 150 | 100 | 50 | 50 |
+| Naive while retry | 200 | 150 | 100 | 50 |
+| RetryKit v2.1 policy | 100 | 0 | 0 | 0 |
+
+These are deterministic simulation counts, not provider-latency or download claims.
 
 MIT licensed.

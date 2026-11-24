@@ -1,11 +1,13 @@
 {
   "name": "@rohan9024/retrykit",
-  "version": "2.1.0",
-  "description": "The AI Resilience & Continuity Engine: Provider-aware rate-limits, key-pool rotation, context auto-healing, and budget guards.",
+  "version": "2.1.1",
+  "description": "Zero-dependency TypeScript reliability layer for LLM retries, AI API rate limits, replay-safe HTTP, streaming recovery, circuit breakers, and MCP.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
-  "engines": { "node": ">=22.0.0" },
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -100,6 +102,7 @@
     "llms.txt",
     "llms-full.txt",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
@@ -112,18 +115,26 @@
   },
   "keywords": [
     "retry",
+    "llm-retry",
+    "ai-retry",
     "openai",
     "anthropic",
     "gemini",
     "groq",
     "deepseek",
     "rate-limit",
+    "retry-after",
     "key-rotation",
     "context-window",
     "circuit-breaker",
     "ai-agents",
     "resilience",
-    "llm"
+    "llm",
+    "streaming",
+    "vercel-ai-sdk",
+    "mcp",
+    "typescript",
+    "nodejs"
   ],
   "author": "Rohan Wandre <rohanwandre24@gmail.com>",
   "license": "MIT",

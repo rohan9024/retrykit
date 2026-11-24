@@ -7,6 +7,11 @@ export interface CoordinatorOptions {
   concurrency?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  maxQueueSize?: number;
+}
+
+export class QueueFullError extends Error {
+  constructor(public readonly maxQueueSize: number) { super(`Provider coordinator queue is full (max ${maxQueueSize}).`); this.name = 'QueueFullError'; }
 }
 
 export class ProviderCoordinator {
@@ -14,6 +19,7 @@ export class ProviderCoordinator {
   private inFlight = 0;
   private cooldownUntil = 0;
   private queue: Array<() => void> = [];
+  private readonly maxQueueSize: number;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
 
@@ -22,6 +28,7 @@ export class ProviderCoordinator {
       this.capacity = options;
       this.now = Date.now;
       this.sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      this.maxQueueSize = Number.POSITIVE_INFINITY;
     } else if (typeof options === 'object' && options !== null) {
       this.capacity =
         options.maxConcurrentAttempts ??
@@ -31,10 +38,12 @@ export class ProviderCoordinator {
         10;
       this.now = options.now ?? Date.now;
       this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+      this.maxQueueSize = options.maxQueueSize ?? Number.POSITIVE_INFINITY;
     } else {
       this.capacity = 10;
       this.now = Date.now;
       this.sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      this.maxQueueSize = Number.POSITIVE_INFINITY;
     }
   }
 
@@ -95,11 +104,21 @@ export class ProviderCoordinator {
     return null;
   }
 
-  public async acquireSlot(_provider?: string | AbortSignal): Promise<void> {
+  public async acquireSlot(providerOrSignal?: string | AbortSignal): Promise<void> {
+    const signal = providerOrSignal instanceof AbortSignal ? providerOrSignal : undefined;
+    if (signal?.aborted) throw signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
     // 1. If at capacity, wait in FIFO queue
     if (this.inFlight >= this.capacity) {
-      await new Promise<void>((resolve) => {
-        this.queue.push(resolve);
+      if (this.queue.length >= this.maxQueueSize) throw new QueueFullError(this.maxQueueSize);
+      await new Promise<void>((resolve, reject) => {
+        const entry = () => { signal?.removeEventListener('abort', onAbort); resolve(); };
+        const onAbort = () => {
+          const index = this.queue.indexOf(entry);
+          if (index >= 0) this.queue.splice(index, 1);
+          reject(signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+        this.queue.push(entry);
       });
     }
 

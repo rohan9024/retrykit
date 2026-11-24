@@ -1,9 +1,9 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
-  "projectTitle": "@rohan9024/retrykit v2.1.0",
+  "projectTitle": "@rohan9024/retrykit v2.1.1",
   "description": "Zero-dependency AI reliability with conservative replay safety, rate-limit coordination, and checkpointed streams.",
   "folders": ["src", "docs", "skills/retrykit"],
   "excludeFolders": ["dist", "node_modules", "src.zip"],
   "excludeFiles": ["package-lock.json"],
-  "rules": ["Current release is v2.1.0 and requires Node.js >=22.", "Use @rohan9024/retrykit in imports.", "Never retry unsafe POST/PATCH without idempotency approval."]
+  "rules": ["Current release is v2.1.1 and requires Node.js >=22.", "Use @rohan9024/retrykit in imports.", "Never retry unsafe POST/PATCH without idempotency approval."]
 }

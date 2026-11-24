@@ -1,0 +1,5 @@
+const presets = { 'OpenAI 429 Storm': { requests: 6, wasted: 4, duplicates: 0, crashes: 0 }, 'Insufficient Quota Key Failover': { requests: 2, wasted: 0, duplicates: 0, crashes: 0 }, 'Mid-Stream Drop Recovery': { requests: 2, wasted: 0, duplicates: 0, crashes: 0 }, 'Orphaned Tool-Call Crash': { requests: 1, wasted: 0, duplicates: 0, crashes: 0 } };
+const buttons = document.querySelector('#presets');
+for (const [name, safe] of Object.entries(presets)) { const button = document.createElement('button'); button.textContent = name; button.onclick = () => render(name, safe); buttons.append(button); }
+function render(name, safe) { document.querySelector('#naive').textContent = `${name}\nRequests Fired: ${safe.requests + 2}\nWasted Quota Retries: ${safe.wasted + 2}\nStream Duplicates: ${name.includes('Stream') ? 1 : 0}\nCompaction Crashes: ${name.includes('Tool') ? 1 : 0}`; document.querySelector('#retrykit').textContent = `${name}\nRequests Fired: ${safe.requests}\nWasted Quota Retries: ${safe.wasted}\nStream Duplicates: ${safe.duplicates}\nCompaction Crashes: ${safe.crashes}`; }
+render('OpenAI 429 Storm', presets['OpenAI 429 Storm']);

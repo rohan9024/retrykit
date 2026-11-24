@@ -1,4 +1,4 @@
-# @rohan9024/retrykit v2.1.0
+# @rohan9024/retrykit v2.1.1
 
 > Zero-dependency reliability and traffic control for AI applications.
 
