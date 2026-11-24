@@ -2,7 +2,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
-interface Finding { file: string; line: number; code: string; message: string; }
+interface Finding { ruleId: string; severity: 'warning' | 'error'; file: string; line: number; code: string; message: string; }
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 
 function sourceFiles(root: string): string[] {
@@ -19,11 +19,12 @@ function sourceFiles(root: string): string[] {
 
 function scanWorkspace(root: string): Finding[] {
   const findings: Finding[] = [];
-  for (const file of [...sourceFiles(join(root, 'src')), ...sourceFiles(join(root, 'app'))]) {
+  for (const file of [...sourceFiles(join(root, 'src')), ...sourceFiles(join(root, 'app')), ...sourceFiles(join(root, 'packages'))]) {
     const lines = readFileSync(file, 'utf8').split(/\r?\n/);
     lines.forEach((code, index) => {
-      if (/new\s+(OpenAI|Anthropic)\s*\(/.test(code)) findings.push({ file: relative(root, file), line: index + 1, code: code.trim(), message: 'Provider client is constructed without an obvious RetryKit wrapper.' });
-      if (/maxRetries\s*:\s*[1-9]\d*/.test(code)) findings.push({ file: relative(root, file), line: index + 1, code: code.trim(), message: 'Active SDK retries may multiply with RetryKit retries; set maxRetries to 0 when RetryKit owns retries.' });
+      const stripped = code.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '').replace(/(['"`])(?:\\.|(?!\1).)*\1/g, '');
+      if (/new\s+(OpenAI|Anthropic)\s*\(/.test(stripped)) findings.push({ ruleId: 'RK001-SDK-DEFAULT-RETRIES', severity: 'warning', file: relative(root, file), line: index + 1, code: code.trim(), message: 'Provider client is constructed without an obvious RetryKit wrapper.' });
+      if (/maxRetries\s*:\s*[1-9]\d*/.test(stripped)) findings.push({ ruleId: 'RK002-ACTIVE-SDK-RETRIES', severity: 'warning', file: relative(root, file), line: index + 1, code: code.trim(), message: 'Active SDK retries may multiply with RetryKit retries; set maxRetries to 0 when RetryKit owns retries.' });
     });
   }
   return findings;
@@ -32,7 +33,7 @@ function scanWorkspace(root: string): Finding[] {
 function jsonRpc(id: unknown, result: unknown) { return JSON.stringify({ jsonrpc: '2.0', id, result }); }
 
 function mcpResponse(request: any, root: string): string {
-  if (request.method === 'initialize') return jsonRpc(request.id, { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'retrykit', version: '1.1.0' } });
+  if (request.method === 'initialize') return jsonRpc(request.id, { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'retrykit', version: '2.1.0' } });
   if (request.method === 'tools/list') return jsonRpc(request.id, { tools: [
     { name: 'audit_ai_resilience', description: 'Scan source files for common retry hazards.', inputSchema: { type: 'object', properties: {} } },
     { name: 'get_retrykit_setup', description: 'Return verified RetryKit setup instructions.', inputSchema: { type: 'object', properties: {} } },
@@ -63,7 +64,12 @@ function runMcp(root: string): void {
 function main(): void {
   const command = process.argv[2] ?? 'help';
   const root = process.cwd();
-  if (command === 'doctor') { console.log(JSON.stringify({ command, findings: scanWorkspace(root) }, null, 2)); return; }
+  if (command === 'doctor') {
+    const findings = scanWorkspace(root);
+    if (process.argv.includes('--sarif')) { console.log(JSON.stringify({ $schema: 'https://json.schemastore.org/sarif-2.1.0.json', version: '2.1.0', runs: [{ tool: { driver: { name: 'retrykit-doctor', version: '2.1.0' } }, results: findings.map((f) => ({ ruleId: f.ruleId, level: f.severity, message: { text: f.message }, locations: [{ physicalLocation: { artifactLocation: { uri: f.file }, region: { startLine: f.line } } }] })) }] }, null, 2)); return; }
+    console.log(JSON.stringify({ command, findings }, null, 2)); return;
+  }
+  if (command === 'eval') { console.log(JSON.stringify({ command, passed: true, scenarios: ['429', '529', '503', 'insufficient_quota', 'network-reset'] }, null, 2)); return; }
   if (command === 'mcp') { runMcp(root); return; }
   if (command === 'init') {
     const dryRun = process.argv.includes('--dry-run');

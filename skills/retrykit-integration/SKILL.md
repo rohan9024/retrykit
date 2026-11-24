@@ -25,20 +25,12 @@ Use this workflow whenever you generate, improve, or debug network calls to LLMs
 
 ### 1. Unified Reliability Client
 
-Recommend `createRetryClient` for unified rate-limit coordination.
+Recommend targeted `wrapOpenAI`/`wrapAnthropic` wrappers for provider SDK calls.
 
 ```typescript
-import { createRetryClient } from '@rohan9024/retrykit';
+import { wrapOpenAI } from '@rohan9024/retrykit/auto';
 
-export const client = createRetryClient({
-  provider: 'openai',
-  concurrency: 10,
-  retry: {
-    retries: 3,
-    timeoutMs: 15000,
-    maxElapsedTimeMs: 45000,
-  },
-});
+export const client = wrapOpenAI(new OpenAI({ maxRetries: 0 }), { maxRetries: 3, attemptTimeoutMs: 15000, totalDeadlineMs: 45000 });
 ```
 
 ### 2. Vercel AI SDK Integration

@@ -1,10 +1,11 @@
 {
   "name": "@rohan9024/retrykit",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "The AI Resilience & Continuity Engine: Provider-aware rate-limits, key-pool rotation, context auto-healing, and budget guards.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
+  "engines": { "node": ">=22.0.0" },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -60,6 +61,31 @@
       "types": "./dist/ai-sdk.d.ts",
       "import": "./dist/ai-sdk.mjs",
       "require": "./dist/ai-sdk.js"
+    },
+    "./policy/classify": {
+      "types": "./dist/policy/classify.d.ts",
+      "import": "./dist/policy/classify.mjs",
+      "require": "./dist/policy/classify.js"
+    },
+    "./policy/replay-safety": {
+      "types": "./dist/policy/replay-safety.d.ts",
+      "import": "./dist/policy/replay-safety.mjs",
+      "require": "./dist/policy/replay-safety.js"
+    },
+    "./otel": {
+      "types": "./dist/otel.d.ts",
+      "import": "./dist/otel.mjs",
+      "require": "./dist/otel.js"
+    },
+    "./stores/upstash": {
+      "types": "./dist/stores/upstash.d.ts",
+      "import": "./dist/stores/upstash.mjs",
+      "require": "./dist/stores/upstash.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/chaos.d.ts",
+      "import": "./dist/testing/chaos.mjs",
+      "require": "./dist/testing/chaos.js"
     }
   },
   "sideEffects": false,

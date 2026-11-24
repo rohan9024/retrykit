@@ -5,6 +5,7 @@ import { KeyPool } from './keys.js';
 import { BudgetTracker } from './budget.js';
 import { compactMessages } from './compaction.js';
 import { globalSingleFlight } from './singleflight.js';
+import { classifyFailure } from './policy/classify.js';
 
 export class MaxRetriesExceededError extends Error {
   constructor(public readonly attempts: number, public readonly lastError: unknown) {
@@ -86,9 +87,10 @@ export async function retry<T>(
         if (options.signal?.aborted) throw rawError;
 
         const rateInfo = extractRateLimitInfo(rawError, options.provider);
+        const classification = classifyFailure(rawError, { provider: options.provider as any, signalAborted: options.signal?.aborted });
 
         // Immediate Halt on Fatal Errors
-        if (rateInfo.isFatal) {
+        if (rateInfo.isFatal || ['billing_exhausted', 'auth_error', 'invalid_request'].includes(classification.category)) {
           throw new FatalError(rateInfo.fatalReason || 'Unrecoverable error', rawError);
         }
 
@@ -100,7 +102,7 @@ export async function retry<T>(
         }
 
         // Key Rotation on 429
-        if (rateInfo.isRateLimited && keyPool && currentKey) {
+        if (rateInfo.isRateLimited && classification.allowKeyRotation && keyPool && currentKey) {
           const newKey = keyPool.markRateLimited(currentKey, rateInfo.retryAfterMs);
           options.onKeyRotate?.(currentKey, newKey, rateInfo.retryAfterMs || 60000);
         }
@@ -109,6 +111,8 @@ export async function retry<T>(
         if (options.shouldRetry) {
           const canRetry = await options.shouldRetry(rawError, attempt);
           if (!canRetry) throw rawError;
+        } else if (!classification.retrySameKey && !classification.allowKeyRotation) {
+          throw rawError;
         }
 
         if (attempt > maxRetries) {

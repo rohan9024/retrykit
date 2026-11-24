@@ -1,4 +1,4 @@
-# RetryKit
+# @rohan9024/retrykit v2.1.0
 
 > Zero-dependency reliability and traffic control for AI applications.
 
@@ -8,3 +8,5 @@
 - [AI coding agents](docs/AI_CODING_AGENTS.md): package versus skill installation
 - [Skill](skills/retrykit/SKILL.md): safe integration workflow
 - [Full API context](llms-full.txt): modules and reliability invariants
+
+Requires Node.js >=22. Use targeted `wrapOpenAI`/`wrapAnthropic` wrappers, explicit idempotency for unsafe mutations, and `getCheckpoint` for stream resumption.

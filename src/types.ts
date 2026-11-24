@@ -47,7 +47,7 @@ export interface BudgetOptions {
 
 export interface CompactionMessage {
   role: string;
-  content: string;
+  content: any;
   [key: string]: unknown;
 }
 
@@ -56,6 +56,7 @@ export interface CompactionOptions {
   targetReductionRatio?: number; // 0.1 to 0.9 (default 0.3 = cut 30% of older context)
   preserveSystemPrompt?: boolean;
   preserveLastNMessages?: number;
+  pinPrefixMessages?: number;
 }
 
 export interface RetryOptions<T = unknown> {
@@ -124,7 +125,11 @@ export interface TokenBucketBudgetOptions { capacity?: number; refillPerSecond?:
 export interface RetryHookInfo { attempt: number; error: unknown; delayMs: number; }
 export type OnRetryCallback = (infoOrError: RetryHookInfo | any, attempt?: number, delayMs?: number) => void | Promise<void>;
 export interface CoreRetryOptions { retries?: number; baseDelayMs?: number; maxDelayMs?: number; maxElapsedTimeMs?: number; shouldRetry?: (error: unknown, attempt: number) => boolean; onRetry?: OnRetryCallback; signal?: AbortSignal; }
-export interface FetchRetryOptions extends CoreRetryOptions { timeoutMs?: number; exceedsMaxDelayBehavior?: 'throw' | 'defer' | 'clamp'; retrySafety?: RetrySafetyPolicy; retryOnStatus?: number[]; providerHint?: string; }
+export interface FetchRetryOptions extends CoreRetryOptions {
+  timeoutMs?: number; exceedsMaxDelayBehavior?: 'throw' | 'defer' | 'clamp'; retrySafety?: RetrySafetyPolicy;
+  retryOnStatus?: number[]; providerHint?: string; idempotencyKey?: string; allowIdempotentMethods?: boolean;
+  allowUnsafePostRetry?: boolean; unsafeReplayApproved?: boolean; requestFactory?: (attempt: number, signal: AbortSignal) => Promise<Response>;
+}
 export interface ProviderContext { url: string; hostname: string; headers?: HeaderSource; providerHint?: string; }
 export interface ProviderAdapter { name: string; matches: (context: ProviderContext) => boolean; parseRateLimit: (headers: HeaderSource, now?: number) => RateLimitResult | null; classifyError?: (error: unknown, status?: number) => RetryDecision; }
 export interface ResumableStreamOptions<T, C = unknown> extends CoreRetryOptions { createStream: (checkpoint: C | undefined, attempt: number, signal?: AbortSignal) => Promise<AsyncIterable<T>>; getCheckpoint?: (chunk: T, previousCheckpoint: C | undefined) => C; initialCheckpoint?: C; allowRestartWithoutCheckpoint?: boolean; timeoutMs?: number; }

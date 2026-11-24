@@ -1,6 +1,6 @@
-# RetryKit complete context
+# @rohan9024/retrykit v2.1.0 complete context
 
-> `@rohan9024/retrykit` is a zero-runtime-dependency TypeScript reliability layer for AI applications.
+> `@rohan9024/retrykit` v2.1.0 is a zero-runtime-dependency TypeScript reliability layer for AI applications. Node.js >=22 is required.
 
 ## Installation
 

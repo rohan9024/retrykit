@@ -7,6 +7,7 @@ export interface AutoOptions<T = unknown> extends Omit<RetryOptions<T>, 'provide
   keys?: string[];
   keyField?: string;
   provider?: 'openai' | 'anthropic' | 'gemini' | string;
+  allowedMethods?: string[];
 }
 
 const KEY_ENV_NAMES = ['OPENAI_API_KEYS', 'ANTHROPIC_API_KEYS', 'GEMINI_API_KEYS'];
@@ -56,19 +57,22 @@ function makeCallArgs(args: any[], keyState: KeyState | undefined, options: Auto
   return next;
 }
 
-function proxyResource(value: any, options: AutoOptions, keyState?: KeyState, seen = new WeakMap<object, any>()): any {
+function proxyResource(value: any, options: AutoOptions, keyState?: KeyState, seen = new WeakMap<object, any>(), path: string[] = []): any {
   if (!value || (typeof value !== 'object' && typeof value !== 'function')) return value;
   if (seen.has(value)) return seen.get(value);
   const proxy = new Proxy(value, {
     get(target, property, receiver) {
       const child = Reflect.get(target, property, receiver);
+      const childPath = [...path, String(property)];
       if (typeof child === 'function') {
+        const allowed = !options.allowedMethods || options.allowedMethods.includes(childPath.join('.'));
+        if (!allowed) return child.bind(target);
         return (...args: any[]) => {
           const { provider: _provider, ...retryOptions } = options;
           return retry(() => child.apply(target, makeCallArgs(args, keyState, options)), { ...retryOptions, maxRetries: options.maxRetries ?? 3 });
         };
       }
-      return proxyResource(child, options, keyState, seen);
+      return proxyResource(child, options, keyState, seen, childPath);
     },
   });
   seen.set(value, proxy);
@@ -79,6 +83,17 @@ function proxyResource(value: any, options: AutoOptions, keyState?: KeyState, se
 export function wrapAI<T>(client: T, options: AutoOptions = {}): T {
   const keys = collectKeys(options);
   return proxyResource(client, options, keys.length ? { keys, next: 0 } : undefined) as T;
+}
+
+const OPENAI_METHODS = ['chat.completions.create', 'responses.create', 'embeddings.create', 'images.generate', 'audio.transcriptions.create', 'audio.speech.create'];
+const ANTHROPIC_METHODS = ['messages.create', 'messages.stream'];
+
+export function wrapOpenAI<T>(client: T, options: AutoOptions = {}): T {
+  return wrapAI(client, { ...options, provider: 'openai', allowedMethods: options.allowedMethods ?? OPENAI_METHODS });
+}
+
+export function wrapAnthropic<T>(client: T, options: AutoOptions = {}): T {
+  return wrapAI(client, { ...options, provider: 'anthropic', allowedMethods: options.allowedMethods ?? ANTHROPIC_METHODS });
 }
 
 /** Create a fetch function that applies bounded retries to requests. */

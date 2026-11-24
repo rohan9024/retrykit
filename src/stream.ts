@@ -220,6 +220,7 @@ export async function* retryStream<T>(
 
   let attempt = 0;
   let totalYielded = 0;
+  let hasEmitted = false;
   let lastCheckpoint: any = options.initialCursor ?? undefined;
   const emittedCursors = new Set<any>();
 
@@ -270,9 +271,12 @@ export async function* retryStream<T>(
             emittedCursors.add(cursor);
             lastCheckpoint = cursor;
             options.onCheckpoint?.(cursor);
+          } else if (hasEmitted && attempt > 0) {
+            throw new StreamDuplicatePreventionError('Checkpoint extractor returned no valid cursor after a partial stream; refusing an unsafe restart.');
           }
 
           totalYielded++;
+          hasEmitted = true;
           options.onChunk?.(chunk);
           yield chunk;
         } catch (err) {
@@ -281,7 +285,7 @@ export async function* retryStream<T>(
         }
       }
     } catch (err) {
-      const isUncheckpointed = !isCheckpointed;
+      const isUncheckpointed = !isCheckpointed || (hasEmitted && lastCheckpoint === undefined);
 
       // Fast-fail if uncheckpointed stream drops mid-sentence after emitting chunks
       if (totalYielded > 0 && isUncheckpointed) {

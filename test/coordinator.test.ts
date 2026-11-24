@@ -38,7 +38,7 @@ describe('ProviderCoordinator Stress & Cooldown Re-checking', () => {
     coordinator.updateFromHeaders({ 'retry-after': '0.03' });
     coordinator.releaseSlot();
     
-await new Promise((r) => setTimeout(r, 20)); // Buffer to account for CI runner timer jitter
+await new Promise((r) => setTimeout(r, 40)); // Cooldown is intentionally no longer clamped in production
 expect(queuedTaskFinishedAfterCooldown).toBe(true);
   });
 });

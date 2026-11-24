@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.0 - 2026-11-24
+
+- Harden conservative retry classification and replay-safe HTTP defaults.
+- Add targeted OpenAI/Anthropic wrappers, provider policy exports, OTel hooks, Upstash state storage, and deterministic Fault Lab utilities.
+- Add checkpoint validation, atomic tool-call compaction, Node.js 22+ alignment, CLI JSON/SARIF/eval support, doc sync, and OIDC release workflow.
+
 ## 2.0.0
 
 - Require explicit `getCheckpoint` before `retryStream` claims resumption.
@@ -12,3 +18,4 @@
 - Added checkpoint-safe stream recovery and linked retry cancellation.
 - Added agent skill, Context7 metadata, AI-agent documentation, and OIDC publishing workflow.
 - Added structural auto, validation, MCP, and AI SDK integration surfaces.
+

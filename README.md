@@ -1,4 +1,4 @@
-# RetryKit
+# @rohan9024/retrykit v2.1.0
 
 The reliability and traffic-control engine for AI applications: provider-aware retries, rate-limit coordination, cancellation, key rotation, circuit breaking, and safe stream recovery—with zero runtime dependencies.
 
@@ -6,13 +6,14 @@ The reliability and traffic-control engine for AI applications: provider-aware r
 
 ```bash
 npm i @rohan9024/retrykit
+# Node.js >=22 is required
 ```
 
 ```ts
 import OpenAI from 'openai';
-import { wrapAI } from '@rohan9024/retrykit/auto';
+import { wrapOpenAI } from '@rohan9024/retrykit/auto';
 
-const client = wrapAI(new OpenAI({ apiKey: process.env.OPENAI_API_KEY }));
+const client = wrapOpenAI(new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 0 }));
 const result = await client.chat.completions.create({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'Hello' }] });
 ```
 
@@ -40,6 +41,9 @@ npx skills add rohan9024/retrykit --skill retrykit
 | `/validate` | Structural Standard Schema validation retries |
 | `/mcp` | Explicitly idempotent MCP retries |
 | `/ai-sdk` | Structural Vercel AI SDK middleware |
+| `/otel` | Zero-dependency, secret-scrubbed GenAI span hooks |
+| `/stores/upstash` | Edge-safe Upstash REST state store |
+| `/testing` | Deterministic Fault Lab utilities |
 
 ## Reliability rules
 
@@ -48,6 +52,8 @@ npx skills add rohan9024/retrykit --skill retrykit
 - Set SDK retries to `0` when RetryKit owns the policy.
 - Built-in coordination state is process-local.
 - Pricing and token estimates are estimates unless based on actual provider usage.
+- `POST` and `PATCH` retries require an idempotency key or explicit replay approval.
+- Unclassified errors are not retried by default.
 
 ## Honest comparison
 

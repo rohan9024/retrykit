@@ -5,6 +5,8 @@ export interface CoordinatorOptions {
   maxConcurrency?: number;
   maxConcurrentAttempts?: number;
   concurrency?: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export class ProviderCoordinator {
@@ -12,10 +14,14 @@ export class ProviderCoordinator {
   private inFlight = 0;
   private cooldownUntil = 0;
   private queue: Array<() => void> = [];
+  private readonly now: () => number;
+  private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(options: CoordinatorOptions | number = 10) {
     if (typeof options === 'number') {
       this.capacity = options;
+      this.now = Date.now;
+      this.sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     } else if (typeof options === 'object' && options !== null) {
       this.capacity =
         options.maxConcurrentAttempts ??
@@ -23,8 +29,12 @@ export class ProviderCoordinator {
         options.maxConcurrency ??
         options.concurrency ??
         10;
+      this.now = options.now ?? Date.now;
+      this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     } else {
       this.capacity = 10;
+      this.now = Date.now;
+      this.sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     }
   }
 
@@ -34,11 +44,11 @@ export class ProviderCoordinator {
 
   public setCooldown(arg1: number | string, arg2?: number): void {
     const duration = typeof arg1 === 'number' ? arg1 : (arg2 ?? 60000);
-    this.cooldownUntil = Date.now() + duration;
+    this.cooldownUntil = this.now() + duration;
   }
 
   public getCooldownRemaining(): number {
-    return Math.max(0, this.cooldownUntil - Date.now());
+    return Math.max(0, this.cooldownUntil - this.now());
   }
 
   public isCoolingDown(): boolean {
@@ -78,10 +88,7 @@ export class ProviderCoordinator {
     }
 
     if (retryAfterMs !== null && retryAfterMs > 0) {
-      // For fast sub-second test suites (<= 30ms), clamp to 8ms
-      // so it expires and reaches 0 well before the test's 20ms CI assertion timer fires
-      const cooldownMs = retryAfterMs <= 30 ? 8 : retryAfterMs;
-      this.setCooldown(cooldownMs);
+      this.setCooldown(retryAfterMs);
       return { retryAfterMs, isRateLimited: true };
     }
 
@@ -102,7 +109,7 @@ export class ProviderCoordinator {
       if (remaining <= 0) {
         break;
       }
-      await new Promise((resolve) => setTimeout(resolve, remaining + 1));
+      await this.sleep(remaining + 1);
     }
 
     this.inFlight++;

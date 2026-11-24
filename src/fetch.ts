@@ -9,6 +9,7 @@ import {
   sleep,
 } from './engine.js';
 import { FetchRetryOptions } from './types.js';
+import { isReplayableBody, isRetrySafeMethod } from './policy/replay-safety.js';
 
 export function combineAbortSignals(signals: (AbortSignal | null | undefined)[]): {
   signal: AbortSignal;
@@ -155,19 +156,28 @@ export async function retryFetch(
   const isSafeMethod = ['GET', 'HEAD', 'OPTIONS'].includes(requestMethod);
   const isIdempotentMethod = ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'].includes(requestMethod);
 
+  const approved = isRetrySafeMethod(requestMethod, options);
+  const body = init?.body;
+  const replayable = isReplayableBody(body) || Boolean(options.requestFactory);
+  const factory = options.requestFactory ?? (async (_attempt: number, signal: AbortSignal) => fetch(url, { ...init, signal }));
+
+  if (options.retries !== 0 && (!approved || !replayable)) {
+    return retryRequest(factory, { ...options, retries: 0 });
+  }
+
   if (options.retrySafety === 'safe-methods-only' && !isSafeMethod) {
-    return retryRequest(async (_, signal) => fetch(url, { ...init, signal }), {
+    return retryRequest(factory, {
       ...options,
       retries: 0,
     });
   }
 
   if (options.retrySafety === 'idempotent-methods-only' && !isIdempotentMethod) {
-    return retryRequest(async (_, signal) => fetch(url, { ...init, signal }), {
+    return retryRequest(factory, {
       ...options,
       retries: 0,
     });
   }
 
-  return retryRequest(async (_, signal) => fetch(url, { ...init, signal }), options);
+  return retryRequest(factory, options);
 }

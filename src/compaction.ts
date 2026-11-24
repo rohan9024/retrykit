@@ -17,16 +17,15 @@ export function compactMessages(
   const preserveSystem = options.preserveSystemPrompt ?? true;
   const preserveLastN = options.preserveLastNMessages ?? 2;
   const reductionRatio = options.targetReductionRatio ?? 0.35;
+  const pinPrefix = options.pinPrefixMessages ?? 0;
 
-  let systemPrompt: CompactionMessage | undefined;
+  const prefix: CompactionMessage[] = [];
   let workingList = [...messages];
 
-  if (preserveSystem && workingList[0]?.role === 'system') {
-    systemPrompt = workingList.shift();
-  }
+  while (workingList.length && ((preserveSystem && workingList[0]?.role === 'system') || prefix.length < pinPrefix)) prefix.push(workingList.shift()!);
 
   if (workingList.length <= preserveLastN) {
-    return systemPrompt ? [systemPrompt, ...workingList] : workingList;
+    return [...prefix, ...workingList];
   }
 
   // Keep latest N messages
@@ -34,10 +33,24 @@ export function compactMessages(
 
   // Target count of intermediate messages to retain
   const toRetainCount = Math.max(1, Math.floor(workingList.length * (1 - reductionRatio)));
-  const compactedMiddle = workingList.slice(workingList.length - toRetainCount);
+  const units: CompactionMessage[][] = [];
+  for (let i = 0; i < workingList.length;) {
+    const current = workingList[i];
+    const unit = [current];
+    const toolCallIds = Array.isArray((current as any).tool_calls) ? (current as any).tool_calls.map((x: any) => x.id).filter(Boolean) : [];
+    if (current.role === 'assistant' && toolCallIds.length) {
+      while (i + unit.length < workingList.length && workingList[i + unit.length].role === 'tool' && toolCallIds.includes((workingList[i + unit.length] as any).tool_call_id)) unit.push(workingList[i + unit.length]);
+    } else if (current.role === 'assistant' && Array.isArray((current as any).content)) {
+      const ids = (current as any).content.filter((x: any) => x?.type === 'tool_use').map((x: any) => x.id);
+      if (ids.length && workingList[i + 1]?.role === 'user' && Array.isArray((workingList[i + 1] as any).content) && (workingList[i + 1] as any).content.some((x: any) => x?.type === 'tool_result' && ids.includes(x.tool_use_id))) unit.push(workingList[i + 1]);
+    }
+    units.push(unit); i += unit.length;
+  }
+  const toRetainUnits = Math.max(1, Math.floor(units.length * (1 - reductionRatio)));
+  const compactedMiddle = units.slice(units.length - toRetainUnits).flat();
 
   const result: CompactionMessage[] = [];
-  if (systemPrompt) result.push(systemPrompt);
+  result.push(...prefix);
   result.push(...compactedMiddle);
   result.push(...recentMessages);
 
