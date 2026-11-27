@@ -5,6 +5,21 @@ export function createChaosFetch(options: ChaosOptions): typeof fetch {
   let calls = 0;
   return (async (_input: RequestInfo | URL, _init?: RequestInit) => {
     calls++;
+    if (options.scenario === 'mid-stream-drop') {
+      const encoder = new TextEncoder();
+      let sent = false;
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (!sent) {
+            sent = true;
+            controller.enqueue(encoder.encode('data: {"id":"chunk-1","text":"partial"}\n\n'));
+          } else {
+            controller.error(new Error('mid-stream connection dropped'));
+          }
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }
     if (calls <= (options.failures ?? 1)) {
       if (options.scenario === 'network-reset') throw Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' });
       const status = options.status ?? (options.scenario === '529' ? 529 : options.scenario === '503' ? 503 : 429);

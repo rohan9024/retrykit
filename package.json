@@ -1,6 +1,6 @@
 {
   "name": "@rohan9024/retrykit",
-  "version": "2.1.2",
+  "version": "3.0.0",
   "mcpName": "io.github.rohan9024/retrykit",
   "description": "Zero-dependency TypeScript reliability layer for LLM retries, AI API rate limits, replay-safe HTTP, streaming recovery, circuit breakers, and MCP.",
   "main": "./dist/index.js",
@@ -89,6 +89,11 @@
       "types": "./dist/testing/chaos.d.ts",
       "import": "./dist/testing/chaos.mjs",
       "require": "./dist/testing/chaos.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.mjs",
+      "require": "./dist/client.js"
     }
   },
   "sideEffects": false,
@@ -112,7 +117,7 @@
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build && npm run test"
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "keywords": [
     "retry",

@@ -218,10 +218,14 @@ export async function* retryStream<T>(
   const isCheckpointed =
     typeof options.getCheckpoint === 'function';
 
+  if (options.initialCheckpoint !== undefined && !isCheckpointed) {
+    throw new TypeError('retryStream requires getCheckpoint when initialCheckpoint is provided.');
+  }
+
   let attempt = 0;
   let totalYielded = 0;
   let hasEmitted = false;
-  let lastCheckpoint: any = options.initialCursor ?? undefined;
+  let lastCheckpoint: any = options.initialCheckpoint ?? options.initialCursor ?? undefined;
   const emittedCursors = new Set<any>();
 
   while (attempt <= maxRetries) {
@@ -237,8 +241,12 @@ export async function* retryStream<T>(
         rawStream = await options.resumeFrom(lastCheckpoint);
       } else if (typeof options.resume === 'function') {
         rawStream = await options.resume(lastCheckpoint);
-      } else {
+      } else if (isCheckpointed && lastCheckpoint !== undefined) {
         rawStream = await factory(lastCheckpoint);
+      } else if (options.allowRestartWithoutCheckpoint) {
+        rawStream = await factory(undefined);
+      } else {
+        throw new StreamDuplicatePreventionError('A stream that has emitted data requires getCheckpoint and a resume function, or allowRestartWithoutCheckpoint=true.');
       }
 
       const iterator = toAsyncIterator<T>(rawStream);

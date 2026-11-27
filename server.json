@@ -6,12 +6,12 @@
     "url": "https://github.com/rohan9024/retrykit",
     "source": "github"
   },
-  "version": "2.1.2",
+  "version": "3.0.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@rohan9024/retrykit",
-      "version": "2.1.2",
+      "version": "3.0.0",
       "transport": { "type": "stdio" },
       "packageArguments": [{ "type": "positional", "value": "mcp", "isRequired": true }]
     }

@@ -1,6 +1,6 @@
-# @rohan9024/retrykit v2.1.2
+# @rohan9024/retrykit v3.0.0
 
-The reliability and traffic-control engine for AI applications: provider-aware retries, rate-limit coordination, cancellation, key rotation, circuit breaking, and safe stream recovery—with zero runtime dependencies.
+The reliability and quota engine for production AI applications: prevent retry storms, coordinate provider limits, and recover streams safely—with zero runtime dependencies.
 
 ## Quick start
 
@@ -44,6 +44,7 @@ npx skills add rohan9024/retrykit --skill retrykit
 | `/otel` | Zero-dependency, secret-scrubbed GenAI span hooks |
 | `/stores/upstash` | Edge-safe Upstash REST state store |
 | `/testing` | Deterministic Fault Lab utilities |
+| `/client` | Coordinated fetch, retry, circuit, budget, and stream client |
 
 ## Reliability rules
 

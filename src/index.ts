@@ -12,3 +12,4 @@ export * from './coordinator.js';
 export { classifyFailure, parseRetryAfterMs } from './policy/classify.js';
 export type { ErrorClassification, AIProvider } from './policy/classify.js';
 export * from './policy/replay-safety.js';
+export * from './client.js';

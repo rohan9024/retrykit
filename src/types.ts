@@ -53,6 +53,8 @@ export interface CompactionMessage {
 
 export interface CompactionOptions {
   enabled?: boolean;
+  messages?: CompactionMessage[];
+  getMessages?: () => CompactionMessage[] | undefined;
   targetReductionRatio?: number; // 0.1 to 0.9 (default 0.3 = cut 30% of older context)
   preserveSystemPrompt?: boolean;
   preserveLastNMessages?: number;
@@ -114,6 +116,9 @@ export interface StreamRetryOptions {
   onChunk?: (chunk: unknown) => void;
   onStall?: (attempt: number) => void;
   getCheckpoint?: (chunk: unknown) => unknown;
+  initialCheckpoint?: unknown;
+  resumeFrom?: (checkpoint: unknown) => unknown | Promise<unknown>;
+  allowRestartWithoutCheckpoint?: boolean;
 }
 export type HeaderSource = Headers | Record<string, string | string[] | undefined> | [string, string][] | undefined;
 export type RetrySafetyPolicy = 'safe-methods-only' | 'idempotent-methods-only' | 'all';

@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.0 - 2026-11-27
+
+- Harden context-overflow compaction initialization with `messages` and `getMessages` inputs.
+- Require `getCheckpoint` before `retryStream` accepts `initialCheckpoint` resumption state.
+- Fix coordinator admission during cooldowns so queued callers cannot oversubscribe capacity.
+- Classify Anthropic nested spend-limit errors and honor `x-should-retry: false`.
+- Add a real partial-stream Fault Lab scenario and export the unified `RetryClient` subpath from the root package.
+- Refresh the package positioning around retry-storm prevention, quota coordination, and safe stream recovery.
+
 ## 2.1.2 - 2026-11-25
 
 - Preserve synchronous Anthropic `messages.stream()` objects while injecting request safety options.

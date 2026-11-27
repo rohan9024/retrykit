@@ -18,7 +18,8 @@ export class ProviderCoordinator {
   public capacity: number;
   private inFlight = 0;
   private cooldownUntil = 0;
-  private queue: Array<() => void> = [];
+  private queue: Array<{ resolve: () => void; reject: (error: unknown) => void; signal?: AbortSignal; onAbort?: () => void }> = [];
+  private cooldownWake: Promise<void> | undefined;
   private readonly maxQueueSize: number;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -54,6 +55,7 @@ export class ProviderCoordinator {
   public setCooldown(arg1: number | string, arg2?: number): void {
     const duration = typeof arg1 === 'number' ? arg1 : (arg2 ?? 60000);
     this.cooldownUntil = this.now() + duration;
+    this.scheduleCooldownWake();
   }
 
   public getCooldownRemaining(): number {
@@ -107,38 +109,50 @@ export class ProviderCoordinator {
   public async acquireSlot(providerOrSignal?: string | AbortSignal): Promise<void> {
     const signal = providerOrSignal instanceof AbortSignal ? providerOrSignal : undefined;
     if (signal?.aborted) throw signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
-    // 1. If at capacity, wait in FIFO queue
-    if (this.inFlight >= this.capacity) {
-      if (this.queue.length >= this.maxQueueSize) throw new QueueFullError(this.maxQueueSize);
-      await new Promise<void>((resolve, reject) => {
-        const entry = () => { signal?.removeEventListener('abort', onAbort); resolve(); };
-        const onAbort = () => {
-          const index = this.queue.indexOf(entry);
-          if (index >= 0) this.queue.splice(index, 1);
-          reject(signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
-        };
-        signal?.addEventListener('abort', onAbort, { once: true });
-        this.queue.push(entry);
-      });
+    if (this.queue.length === 0 && this.inFlight < this.capacity && !this.isCoolingDown()) {
+      this.inFlight++;
+      return;
     }
-
-    // 2. Re-check cooldown when waking up from queue
-    while (true) {
-      const remaining = this.getCooldownRemaining();
-      if (remaining <= 0) {
-        break;
-      }
-      await this.sleep(remaining + 1);
-    }
-
-    this.inFlight++;
+    if (this.queue.length >= this.maxQueueSize) throw new QueueFullError(this.maxQueueSize);
+    await new Promise<void>((resolve, reject) => {
+      const entry: { resolve: () => void; reject: (error: unknown) => void; signal?: AbortSignal; onAbort?: () => void } = { resolve, reject, signal };
+      const onAbort = () => {
+        const index = this.queue.indexOf(entry);
+        if (index >= 0) this.queue.splice(index, 1);
+        reject(signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
+      };
+      entry.onAbort = onAbort;
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.queue.push(entry);
+      this.pumpQueue();
+    });
   }
 
   public releaseSlot(_provider?: string): void {
     this.inFlight = Math.max(0, this.inFlight - 1);
-    if (this.queue.length > 0) {
-      const next = this.queue.shift();
-      next?.();
+    this.pumpQueue();
+  }
+
+  private scheduleCooldownWake(): void {
+    if (this.cooldownWake || !this.queue.length) return;
+    const remaining = this.getCooldownRemaining();
+    if (remaining <= 0) return;
+    this.cooldownWake = this.sleep(remaining + 1).finally(() => {
+      this.cooldownWake = undefined;
+      this.pumpQueue();
+    });
+  }
+
+  private pumpQueue(): void {
+    if (this.isCoolingDown()) {
+      this.scheduleCooldownWake();
+      return;
+    }
+    while (this.queue.length > 0 && this.inFlight < this.capacity) {
+      const next = this.queue.shift()!;
+      if (next.signal && next.onAbort) next.signal.removeEventListener('abort', next.onAbort);
+      this.inFlight++;
+      next.resolve();
     }
   }
 
@@ -158,6 +172,7 @@ export class ProviderCoordinator {
   public reset(): void {
     this.inFlight = 0;
     this.cooldownUntil = 0;
+    for (const waiter of this.queue) waiter.reject(new Error('Provider coordinator was reset.'));
     this.queue = [];
   }
 }

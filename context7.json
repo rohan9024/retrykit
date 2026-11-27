@@ -1,6 +1,6 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
-  "projectTitle": "@rohan9024/retrykit v2.1.2",
+  "projectTitle": "@rohan9024/retrykit v3.0.0",
   "description": "Zero-dependency AI reliability with conservative replay safety, rate-limit coordination, and checkpointed streams.",
   "folders": ["src", "docs", "skills/retrykit"],
   "excludeFolders": ["dist", "node_modules", "src.zip"],

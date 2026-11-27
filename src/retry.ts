@@ -33,7 +33,7 @@ export async function retry<T>(
 
     let attempt = 0;
     const startTime = Date.now();
-    let compactedPayload: unknown[] | undefined;
+    let compactedPayload: unknown[] | undefined = options.compaction?.messages ?? options.compaction?.getMessages?.();
 
     while (true) {
       attempt++;
